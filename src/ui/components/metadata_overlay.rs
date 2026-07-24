@@ -68,11 +68,16 @@ impl MetadataOverlay {
         self.item.as_ref()
     }
 
-    /// Full design page, translated up from below as `slide` goes 0 → 1.
+    /// Page rect translated up from below as `slide` goes 0 → 1.
+    /// Uses [`layout`](Widget::layout) bounds so the overlay tracks a sliding tab page.
     fn page_rect(&self) -> Rect {
         let t = self.slide.value().clamp(0.0, 1.0);
-        let full = Rect::design();
-        Rect::new(0.0, full.h * (1.0 - t), full.w, full.h)
+        let full = if self.bounds.w > 1.0 {
+            self.bounds
+        } else {
+            Rect::design()
+        };
+        Rect::new(full.x, full.y + full.h * (1.0 - t), full.w, full.h)
     }
 }
 

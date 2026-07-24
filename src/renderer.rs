@@ -32,6 +32,10 @@ pub trait Renderer {
     /// (glyph height), rendered with a system sans-serif font.
     fn draw_text(&mut self, x: i32, y: i32, size: i32, color: Color, text: &str);
 
+    /// Restrict subsequent drawing to `clip` in design-space pixels, or clear
+    /// the clip when `None`. Backends that lack scissor may no-op.
+    fn set_clip(&mut self, _clip: Option<crate::geom::Rect>) {}
+
     /// Axis-aligned filled rectangle, composed from two triangles.
     fn fill_rect(&mut self, x: i32, y: i32, width: i32, height: i32, color: Color) {
         if width <= 0 || height <= 0 {

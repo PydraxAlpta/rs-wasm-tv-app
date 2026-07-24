@@ -36,6 +36,23 @@ impl Rect {
         self.y + self.h
     }
 
+    pub fn intersect(self, other: Self) -> Self {
+        let x0 = self.x.max(other.x);
+        let y0 = self.y.max(other.y);
+        let x1 = self.right().min(other.right());
+        let y1 = self.bottom().min(other.bottom());
+        Self {
+            x: x0,
+            y: y0,
+            w: (x1 - x0).max(0.0),
+            h: (y1 - y0).max(0.0),
+        }
+    }
+
+    pub fn is_empty(self) -> bool {
+        self.w <= 0.0 || self.h <= 0.0
+    }
+
     pub fn inset(self, insets: Insets) -> Self {
         Self {
             x: self.x + insets.left,
@@ -116,5 +133,14 @@ mod tests {
     fn inset_shrinks_rect() {
         let r = Rect::new(10.0, 20.0, 100.0, 80.0).inset(Insets::uniform(10.0));
         assert_eq!(r, Rect::new(20.0, 30.0, 80.0, 60.0));
+    }
+
+    #[test]
+    fn intersect_clips() {
+        let a = Rect::new(0.0, 0.0, 100.0, 100.0);
+        let b = Rect::new(50.0, -10.0, 100.0, 60.0);
+        let i = a.intersect(b);
+        assert_eq!(i, Rect::new(50.0, 0.0, 50.0, 50.0));
+        assert!(a.intersect(Rect::new(200.0, 0.0, 10.0, 10.0)).is_empty());
     }
 }

@@ -19,7 +19,7 @@ use webgl2::WebGl2Renderer;
 
 use crate::renderer::Renderer;
 use crate::screen::{Ctx, Key, Screen, Transition};
-use crate::ui::BrowseScreen;
+use crate::ui::MainShell;
 use crate::utils::set_panic_hook;
 use crate::{Catalog, Color, Metrics, DESIGN_HEIGHT, DESIGN_WIDTH};
 
@@ -176,7 +176,7 @@ pub fn setup_app(root: HtmlElement, player: JsPlayer) {
         video: JsPlayerSink::new(player),
         catalog: Catalog::sample(),
         metrics: Metrics::tv(),
-        stack: vec![Box::new(BrowseScreen::new())],
+        stack: vec![Box::new(MainShell::new())],
         last_ts: None,
         perf_hud,
         frame_ms_avg: 0.0,

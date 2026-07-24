@@ -444,6 +444,7 @@ impl Renderer for WebGl2Renderer {
     fn begin_frame(&mut self, clear: Color) {
         self.line_verts.clear();
         self.tri_verts.clear();
+        self.gl.disable(WebGl2RenderingContext::SCISSOR_TEST);
         self.gl.clear_color(
             f32::from(clear.r) / 255.0,
             f32::from(clear.g) / 255.0,
@@ -455,6 +456,7 @@ impl Renderer for WebGl2Renderer {
 
     fn end_frame(&mut self) {
         self.flush_color_batches();
+        self.gl.disable(WebGl2RenderingContext::SCISSOR_TEST);
     }
 
     fn stroke_line(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, color: Color) {
@@ -535,6 +537,25 @@ impl Renderer for WebGl2Renderer {
             return;
         };
         self.draw_texture_quad(x, y, w, h, &texture);
+    }
+
+    fn set_clip(&mut self, clip: Option<crate::geom::Rect>) {
+        self.flush_color_batches();
+        match clip {
+            Some(rect) if !rect.is_empty() => {
+                let x = rect.x.round() as i32;
+                let y = rect.y.round() as i32;
+                let w = rect.w.round().max(0.0) as i32;
+                let h = rect.h.round().max(0.0) as i32;
+                // WebGL scissor origin is bottom-left.
+                let gl_y = self.height as i32 - y - h;
+                self.gl.enable(WebGl2RenderingContext::SCISSOR_TEST);
+                self.gl.scissor(x, gl_y, w, h);
+            }
+            _ => {
+                self.gl.disable(WebGl2RenderingContext::SCISSOR_TEST);
+            }
+        }
     }
 }
 

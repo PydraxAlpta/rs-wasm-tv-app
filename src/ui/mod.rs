@@ -3,7 +3,5 @@
 pub mod components;
 pub mod pages;
 
-pub use components::{
-    BannerCarousel, Flex, FocusResult, HCarousel, Widget,
-};
-pub use pages::{BrowseScreen, PlayerScreen};
+pub use components::{BannerCarousel, Flex, FocusResult, HCarousel, Widget};
+pub use pages::{CatalogPage, MainShell, PlayerScreen};

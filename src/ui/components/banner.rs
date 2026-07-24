@@ -92,10 +92,12 @@ impl BannerCarousel {
             let logical = base + offset;
             let idx = logical.rem_euclid(n) as usize;
             let x = viewport_l + (logical as f32 - slide_t) * self.bounds.w;
-            if x + self.bounds.w <= viewport_l || x >= viewport_r {
+            // Strict bounds check — avoid zero-size / fully clipped draws that
+            // flash when the parent page is mid-slide.
+            if x + self.bounds.w <= viewport_l + 0.5 || x >= viewport_r - 0.5 {
                 continue;
             }
-            let xi = x as i32;
+            let xi = x.round() as i32;
             r.fill_rect(xi, by, bw, bh, theme::CARD_BG);
             r.draw_image(xi, by, bw, bh, &slides[idx].image_url);
         }
@@ -106,7 +108,10 @@ impl BannerCarousel {
             let dots_x0 = bx + 24;
             for i in 0..slides.len() {
                 let cx = dots_x0 + i as i32 * DOT_GAP;
-                let color = if i == self.pages.index() {
+                let active = i == self.pages.index();
+                let color = if active && self.focused {
+                    theme::TEXT
+                } else if active {
                     theme::FOCUS
                 } else {
                     theme::TEXT_DIM.with_alpha(180)
@@ -116,7 +121,8 @@ impl BannerCarousel {
         }
 
         if self.focused {
-            card::draw_focus_ring(r, self.bounds);
+            // Ring grows outward from the banner edge.
+            card::draw_focus_ring_strong(r, self.bounds);
         }
     }
 }
@@ -155,7 +161,7 @@ impl Widget for BannerCarousel {
                 FocusResult::Handled
             }
             Key::Down => FocusResult::MoveOut(Key::Down),
-            Key::Up => FocusResult::Handled,
+            Key::Up => FocusResult::MoveOut(Key::Up),
             Key::Enter => FocusResult::Activate,
             Key::Back => FocusResult::Ignored,
         }

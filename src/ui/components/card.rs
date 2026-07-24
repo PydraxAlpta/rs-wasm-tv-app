@@ -14,9 +14,18 @@ pub fn draw_card(r: &mut dyn Renderer, rect: Rect, image_url: &str) {
 
 /// Multi-layer focus stroke used by cards and the hero banner.
 pub fn draw_focus_ring(r: &mut dyn Renderer, rect: Rect) {
+    draw_focus_ring_layers(r, rect, 4);
+}
+
+/// Stronger ring for large surfaces (e.g. the hero banner).
+pub fn draw_focus_ring_strong(r: &mut dyn Renderer, rect: Rect) {
+    draw_focus_ring_layers(r, rect, 7);
+}
+
+fn draw_focus_ring_layers(r: &mut dyn Renderer, rect: Rect, layers: i32) {
     let (x, y, w, h) = rect.as_i32();
-    for i in 0..4 {
-        let a = 200u8.saturating_sub(i as u8 * 45);
+    for i in 0..layers {
+        let a = 220u8.saturating_sub(i as u8 * 28);
         r.stroke_rect(x - i, y - i, w + 2 * i, h + 2 * i, theme::FOCUS.with_alpha(a));
     }
 }

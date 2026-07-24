@@ -1,7 +1,9 @@
 //! Full-screen pages hosted by the screen stack.
 
-pub mod browse;
+pub mod catalog;
 pub mod player;
+pub mod shell;
 
-pub use browse::BrowseScreen;
+pub use catalog::CatalogPage;
 pub use player::PlayerScreen;
+pub use shell::MainShell;

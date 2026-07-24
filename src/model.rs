@@ -20,21 +20,42 @@ pub struct Rail {
     pub cards: Vec<Card>,
 }
 
-/// The whole browse page: an ordered list of rails.
+/// Full-width hero slide above the rails.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BannerSlide {
+    pub title: String,
+    pub image_url: String,
+}
+
+/// The whole browse page: hero banners + an ordered list of rails.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Catalog {
+    pub banners: Vec<BannerSlide>,
     pub rails: Vec<Rail>,
 }
 
 impl Catalog {
-    /// Demo content: 20 rails × 10 cards, poster art from picsum with fixed
-    /// per-card seeds so the same image is stable across reloads.
+    /// Demo content: hero banners + 20 rails × 10 cards. Poster art from
+    /// picsum with fixed seeds so images stay stable across reloads.
     pub fn sample() -> Self {
+        const BANNER_COUNT: usize = 5;
         const RAIL_COUNT: usize = 20;
         const PER_RAIL: usize = 10;
+        // Wide hero art; renderer stretches to the banner rect.
+        const BANNER_W: u32 = 1920;
+        const BANNER_H: u32 = 600;
         // Portrait poster art (~2:3); renderer stretches to card size.
         const ART_W: u32 = 400;
         const ART_H: u32 = 600;
+
+        let mut banners = Vec::with_capacity(BANNER_COUNT);
+        for b in 0..BANNER_COUNT {
+            let seed = format!("lb-banner-{b}");
+            banners.push(BannerSlide {
+                title: format!("Featured {}", b + 1),
+                image_url: format!("https://picsum.photos/seed/{seed}/{BANNER_W}/{BANNER_H}"),
+            });
+        }
 
         let mut rails = Vec::with_capacity(RAIL_COUNT);
         let mut id = 0u32;
@@ -52,7 +73,7 @@ impl Catalog {
             }
             rails.push(Rail { title, cards });
         }
-        Self { rails }
+        Self { banners, rails }
     }
 }
 
@@ -63,6 +84,7 @@ mod tests {
     #[test]
     fn sample_has_expected_shape() {
         let cat = Catalog::sample();
+        assert_eq!(cat.banners.len(), 5);
         assert_eq!(cat.rails.len(), 20);
         for rail in &cat.rails {
             assert_eq!(rail.cards.len(), 10);

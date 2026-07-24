@@ -11,6 +11,8 @@ pub struct Layout {
 
     /// Fixed page-header band height; rails scroll only below this.
     pub header_h: f32,
+    /// Full-width hero banner height (collapsed via a 0..=1 reveal factor).
+    pub banner_h: f32,
 
     pub card_w: f32,
     pub card_h: f32,
@@ -21,9 +23,8 @@ pub struct Layout {
     /// Vertical distance between consecutive rail rows.
     pub rail_step: f32,
 
-    /// Fixed on-screen focus anchor (top-left of the focused card slot).
+    /// Fixed on-screen focus anchor X (left of the focused card slot).
     pub focus_x: f32,
-    pub focus_y: f32,
     /// Scale applied to the focused card (reserved for polish; unused by v1).
     pub focus_scale: f32,
 }
@@ -41,6 +42,7 @@ impl Layout {
             design_h: 1080.0,
             safe_margin,
             header_h,
+            banner_h: 420.0,
             card_w,
             card_h,
             card_gap: 24.0,
@@ -48,8 +50,6 @@ impl Layout {
             // Title + card + focused-title line + gap before next rail title.
             rail_step: rail_title_h + card_h + 56.0 + 36.0,
             focus_x: safe_margin,
-            // First rail's cards sit just under the header + its rail title.
-            focus_y: header_h + rail_title_h + 8.0,
             focus_scale: 1.08,
         }
     }
@@ -59,16 +59,23 @@ impl Layout {
         self.card_w + self.card_gap
     }
 
+    /// Top of the focused card row given banner reveal `banner_t` in `0..=1`
+    /// (`1` = fully shown below the header, `0` = collapsed).
+    pub fn focus_y(&self, banner_t: f32) -> f32 {
+        let t = banner_t.clamp(0.0, 1.0);
+        self.header_h + self.banner_h * t + self.rail_title_h + 8.0
+    }
+
     /// Left edge of card `col` given the animated fractional focused column.
     /// When `anim_col == col` the card sits exactly at `focus_x`.
     pub fn card_x(&self, col: usize, anim_col: f32) -> f32 {
         self.focus_x + (col as f32 - anim_col) * self.card_step()
     }
 
-    /// Top of rail `rail`'s card row given the animated fractional focused rail.
-    /// When `anim_rail == rail` the row sits exactly at `focus_y`.
-    pub fn rail_y(&self, rail: usize, anim_rail: f32) -> f32 {
-        self.focus_y + (rail as f32 - anim_rail) * self.rail_step
+    /// Top of rail `rail`'s card row given the animated fractional focused rail
+    /// and banner reveal. When `anim_rail == rail` the row sits at `focus_y`.
+    pub fn rail_y(&self, rail: usize, anim_rail: f32, banner_t: f32) -> f32 {
+        self.focus_y(banner_t) + (rail as f32 - anim_rail) * self.rail_step
     }
 }
 
@@ -81,8 +88,8 @@ mod tests {
         let l = Layout::tv();
         // Settled on column 3 → card 3 lands exactly at focus_x.
         assert!((l.card_x(3, 3.0) - l.focus_x).abs() < 1e-4);
-        // Settled on rail 2 → rail 2 row lands exactly at focus_y.
-        assert!((l.rail_y(2, 2.0) - l.focus_y).abs() < 1e-4);
+        // Settled on rail 2 with banner collapsed → rail 2 at focus_y(0).
+        assert!((l.rail_y(2, 2.0, 0.0) - l.focus_y(0.0)).abs() < 1e-4);
     }
 
     #[test]
@@ -93,9 +100,11 @@ mod tests {
     }
 
     #[test]
-    fn focus_anchor_sits_below_header() {
+    fn banner_reveal_pushes_focus_down() {
         let l = Layout::tv();
-        assert!(l.focus_y - l.rail_title_h >= l.header_h);
+        assert!(l.focus_y(1.0) > l.focus_y(0.0));
+        assert!((l.focus_y(1.0) - l.focus_y(0.0) - l.banner_h).abs() < 1e-4);
+        assert!(l.focus_y(0.0) - l.rail_title_h >= l.header_h);
         assert!(l.card_h > l.card_w); // portrait tiles
     }
 }

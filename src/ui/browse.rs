@@ -1,12 +1,11 @@
-//! Browse screen: vertically stacked rails of portrait cards with a fixed
-//! focus anchor and a static page header.
+//! Browse screen: hero banner carousel + vertically stacked portrait rails.
 //!
 //! Card/rail positions derive from *animated fractional* focused indices
-//! (`anim_col`, `anim_rail`), so the focus frame stays pinned at
-//! `layout.focus_x/focus_y` while the content slides behind it — only in the
-//! area below `layout.header_h`. Vertical moves and horizontal moves within a
-//! rail animate; switching rails snaps the horizontal offset to that rail's
-//! remembered column so it doesn't slide sideways while moving up/down.
+//! (`anim_col`, `anim_rail`), so the focus frame stays pinned while content
+//! slides behind it. The full-width banner sits under the static header; it
+//! collapses when leaving the first rail (rails slide up) and expands again
+//! when returning. Banner slides change only via Left/Right while the banner
+//! itself is focused (horizontal slide tween) — no auto-scroll.
 
 use crate::anim::Tween;
 use crate::renderer::Renderer;
@@ -17,12 +16,23 @@ use crate::ui::player::PlayerScreen;
 /// Time-constant (seconds) for navigation easing — small = snappy.
 const NAV_TAU: f32 = 0.11;
 
+const DOT_RADIUS: i32 = 7;
+const DOT_GAP: i32 = 22;
+
 pub struct BrowseScreen {
     focus_rail: usize,
     /// Remembered column per rail (so returning to a rail keeps its position).
     focus_col: Vec<usize>,
+    /// Index into `catalog.banners`.
+    banner_idx: usize,
+    /// When true, Left/Right drive the banner instead of the focused rail.
+    banner_focused: bool,
     anim_rail: Tween,
     anim_col: Tween,
+    /// `1` = banner fully shown, `0` = collapsed (rail ≥ 1).
+    anim_banner: Tween,
+    /// Fractional banner index — drives the horizontal slide.
+    anim_banner_slide: Tween,
     initialized: bool,
 }
 
@@ -31,8 +41,12 @@ impl BrowseScreen {
         Self {
             focus_rail: 0,
             focus_col: Vec::new(),
+            banner_idx: 0,
+            banner_focused: false,
             anim_rail: Tween::new(0.0, NAV_TAU),
             anim_col: Tween::new(0.0, NAV_TAU),
+            anim_banner: Tween::new(1.0, NAV_TAU),
+            anim_banner_slide: Tween::new(0.0, NAV_TAU),
             initialized: false,
         }
     }
@@ -45,6 +59,14 @@ impl BrowseScreen {
         )
     }
 
+    pub fn banner_index(&self) -> usize {
+        self.banner_idx
+    }
+
+    pub fn banner_focused(&self) -> bool {
+        self.banner_focused
+    }
+
     fn ensure_init(&mut self, ctx: &Ctx) {
         if !self.initialized {
             self.focus_col = vec![0; ctx.catalog.rails.len()];
@@ -54,6 +76,46 @@ impl BrowseScreen {
 
     fn current_col(&self) -> usize {
         self.focus_col.get(self.focus_rail).copied().unwrap_or(0)
+    }
+
+    fn sync_banner_target(&mut self) {
+        let t = if self.focus_rail == 0 { 1.0 } else { 0.0 };
+        self.anim_banner.set_target(t);
+    }
+
+    /// Advance/retreat the banner with wrap-around. The slide tween target moves
+    /// by ±1 from its *current target* (not the logical index) so rapid wraps
+    /// never reverse direction mid-flight; [`normalize_banner_slide`] folds the
+    /// unbounded value back into `0..n` once settled.
+    fn step_banner(&mut self, delta: i32, count: usize) {
+        if count == 0 || delta == 0 {
+            return;
+        }
+        let n = count as f32;
+        let new_target = self.anim_banner_slide.target() + delta as f32;
+        self.anim_banner_slide.set_target(new_target);
+        self.banner_idx = new_target.rem_euclid(n) as usize;
+    }
+
+    fn normalize_banner_slide(&mut self, count: usize) {
+        if count == 0 || !self.anim_banner_slide.is_settled() {
+            return;
+        }
+        let n = count as f32;
+        let normalized = self.anim_banner_slide.value().rem_euclid(n);
+        if (normalized - self.anim_banner_slide.value()).abs() > 1e-3 {
+            self.anim_banner_slide.snap(normalized);
+        }
+    }
+
+    fn move_to_rail(&mut self, rail: usize) {
+        self.focus_rail = rail;
+        self.anim_rail.set_target(rail as f32);
+        self.anim_col.snap(self.current_col() as f32);
+        if rail > 0 {
+            self.banner_focused = false;
+        }
+        self.sync_banner_target();
     }
 }
 
@@ -68,12 +130,34 @@ impl Screen for BrowseScreen {
         self.ensure_init(ctx);
         self.anim_rail.step(dt);
         self.anim_col.step(dt);
+        self.anim_banner.step(dt);
+        self.anim_banner_slide.step(dt);
+        self.normalize_banner_slide(ctx.catalog.banners.len());
     }
 
     fn handle_key(&mut self, key: Key, ctx: &mut Ctx) -> Transition {
         self.ensure_init(ctx);
         let rails = &ctx.catalog.rails;
+        let banners = &ctx.catalog.banners;
         if rails.is_empty() {
+            return Transition::None;
+        }
+
+        if self.banner_focused {
+            match key {
+                Key::Left => self.step_banner(-1, banners.len()),
+                Key::Right => self.step_banner(1, banners.len()),
+                Key::Down => {
+                    self.banner_focused = false;
+                }
+                Key::Up => {}
+                Key::Enter => {
+                    if let Some(slide) = banners.get(self.banner_idx) {
+                        return Transition::Push(Box::new(PlayerScreen::new(slide.title.clone())));
+                    }
+                }
+                Key::Back => {}
+            }
             return Transition::None;
         }
 
@@ -94,18 +178,17 @@ impl Screen for BrowseScreen {
                 }
             }
             Key::Up => {
-                if self.focus_rail > 0 {
-                    self.focus_rail -= 1;
-                    self.anim_rail.set_target(self.focus_rail as f32);
-                    // Show the new rail at its remembered column without sliding.
-                    self.anim_col.snap(self.current_col() as f32);
+                if self.focus_rail == 0 {
+                    if !banners.is_empty() {
+                        self.banner_focused = true;
+                    }
+                } else {
+                    self.move_to_rail(self.focus_rail - 1);
                 }
             }
             Key::Down => {
                 if self.focus_rail + 1 < rails.len() {
-                    self.focus_rail += 1;
-                    self.anim_rail.set_target(self.focus_rail as f32);
-                    self.anim_col.snap(self.current_col() as f32);
+                    self.move_to_rail(self.focus_rail + 1);
                 }
             }
             Key::Enter => {
@@ -124,6 +207,8 @@ impl Screen for BrowseScreen {
         let l = ctx.layout;
         let dw = l.design_w as i32;
         let header_h = l.header_h as i32;
+        let banner_t = self.anim_banner.value();
+        let banner_h = l.banner_h as i32;
 
         // Opaque background (the GL canvas itself is transparent).
         r.fill_rect(0, 0, dw, l.design_h as i32, theme::BG);
@@ -131,9 +216,10 @@ impl Screen for BrowseScreen {
         let anim_rail = self.anim_rail.value();
         let card_w = l.card_w as i32;
         let card_h = l.card_h as i32;
+        let focus_y = l.focus_y(banner_t);
 
         for (ri, rail) in ctx.catalog.rails.iter().enumerate() {
-            let row_top = l.rail_y(ri, anim_rail);
+            let row_top = l.rail_y(ri, anim_rail, banner_t);
             let title_y = row_top - l.rail_title_h;
             // Cull rails fully above the header band or fully below the screen.
             if row_top + l.card_h < l.header_h || title_y > l.design_h {
@@ -168,36 +254,104 @@ impl Screen for BrowseScreen {
                     continue;
                 }
                 let xi = x as i32;
-                // Placeholder fill (shown until the image finishes loading), then art.
                 r.fill_rect(xi, row_top_i, card_w, card_h, theme::CARD_BG);
                 r.draw_image(xi, row_top_i, card_w, card_h, &card.image_url);
                 r.stroke_rect(xi, row_top_i, card_w, card_h, theme::CARD_BORDER);
             }
         }
 
-        // Focus frame — fixed anchor above the cards.
-        let fx = l.focus_x as i32;
-        let fy = l.focus_y as i32;
-        for i in 0..4 {
-            let a = 200u8.saturating_sub(i as u8 * 45);
-            r.stroke_rect(
-                fx - i,
-                fy - i,
-                card_w + 2 * i,
-                card_h + 2 * i,
-                theme::FOCUS.with_alpha(a),
-            );
-        }
+        // Hero banner — full content width with TV safe insets; slides under the
+        // header as `banner_t` collapses. Images slide horizontally on Left/Right.
+        if banner_t > 0.001 {
+            let margin = l.safe_margin as i32;
+            let banner_x = margin;
+            let banner_w = dw - 2 * margin;
+            let banner_top = (l.header_h - l.banner_h * (1.0 - banner_t)) as i32;
+            let slide_t = self.anim_banner_slide.value();
+            let viewport_l = banner_x as f32;
+            let viewport_r = (banner_x + banner_w) as f32;
 
-        // Focused card title, below the focus frame.
-        if let Some(rail) = ctx.catalog.rails.get(self.focus_rail) {
-            if let Some(card) = rail.cards.get(self.current_col()) {
-                r.draw_text(fx, fy + card_h + 14, 28, theme::TEXT, &card.title);
+            r.fill_rect(banner_x, banner_top, banner_w, banner_h, theme::CARD_BG);
+
+            let banners = &ctx.catalog.banners;
+            let n = banners.len() as i32;
+            if n > 0 {
+                let draw_at = |r: &mut dyn Renderer, logical_i: f32, url: &str| {
+                    let x = viewport_l + (logical_i - slide_t) * banner_w as f32;
+                    if x + banner_w as f32 <= viewport_l || x >= viewport_r {
+                        return;
+                    }
+                    let xi = x as i32;
+                    r.fill_rect(xi, banner_top, banner_w, banner_h, theme::CARD_BG);
+                    r.draw_image(xi, banner_top, banner_w, banner_h, url);
+                };
+
+                // Draw modular copies around the unbounded slide position so
+                // wrap-around (and fast multi-wrap) still slides one way.
+                let base = slide_t.floor() as i32;
+                for offset in -1..=2 {
+                    let logical = base + offset;
+                    let idx = logical.rem_euclid(n) as usize;
+                    draw_at(r, logical as f32, &banners[idx].image_url);
+                }
+            }
+
+            // Mask safe-margin gutters so sliding art doesn't spill past the inset.
+            r.fill_rect(0, banner_top, banner_x, banner_h, theme::BG);
+            r.fill_rect(banner_x + banner_w, banner_top, margin, banner_h, theme::BG);
+
+            // Pagination dots — bottom-left of the banner.
+            let dots_y = banner_top + banner_h - margin / 2;
+            if dots_y > header_h {
+                let dots_x0 = banner_x + margin / 2;
+                for (i, _) in ctx.catalog.banners.iter().enumerate() {
+                    let cx = dots_x0 + i as i32 * DOT_GAP;
+                    let color = if i == self.banner_idx {
+                        theme::FOCUS
+                    } else {
+                        theme::TEXT_DIM.with_alpha(180)
+                    };
+                    r.fill_circle(cx, dots_y, DOT_RADIUS, color);
+                }
+            }
+
+            if self.banner_focused {
+                for i in 0..4 {
+                    let a = 200u8.saturating_sub(i as u8 * 45);
+                    r.stroke_rect(
+                        banner_x - i,
+                        banner_top + i,
+                        banner_w + 2 * i,
+                        banner_h - 2 * i,
+                        theme::FOCUS.with_alpha(a),
+                    );
+                }
             }
         }
 
-        // Static header band — painted after rails so scrolling content never
-        // covers the app name.
+        // Card focus frame — only when the rails own focus.
+        if !self.banner_focused {
+            let fx = l.focus_x as i32;
+            let fy = focus_y as i32;
+            for i in 0..4 {
+                let a = 200u8.saturating_sub(i as u8 * 45);
+                r.stroke_rect(
+                    fx - i,
+                    fy - i,
+                    card_w + 2 * i,
+                    card_h + 2 * i,
+                    theme::FOCUS.with_alpha(a),
+                );
+            }
+
+            if let Some(rail) = ctx.catalog.rails.get(self.focus_rail) {
+                if let Some(card) = rail.cards.get(self.current_col()) {
+                    r.draw_text(fx, fy + card_h + 14, 28, theme::TEXT, &card.title);
+                }
+            }
+        }
+
+        // Static header band — painted last so scrolling content never covers it.
         r.fill_rect(0, 0, dw, header_h, theme::BG);
         r.draw_text(
             l.safe_margin as i32,
@@ -255,7 +409,6 @@ mod tests {
                 s.handle_key(Key::Right, ctx);
             }
         });
-        // 10 cards → last index 9, never overflows.
         assert_eq!(s.focus(), (0, 9));
     }
 
@@ -275,20 +428,81 @@ mod tests {
                 s.handle_key(Key::Down, ctx);
             }
         });
-        assert_eq!(s.focus().0, 19); // 20 rails → last index 19
+        assert_eq!(s.focus().0, 19);
+        assert!((s.anim_banner.target() - 0.0).abs() < 1e-4);
     }
 
     #[test]
     fn column_is_remembered_per_rail() {
         let s = with_ctx(|s, ctx| {
-            s.handle_key(Key::Right, ctx); // rail 0 → col 1
-            s.handle_key(Key::Right, ctx); // rail 0 → col 2
-            s.handle_key(Key::Down, ctx); // rail 1, col 0
-            s.handle_key(Key::Right, ctx); // rail 1 → col 1
-            s.handle_key(Key::Up, ctx); // back to rail 0
+            s.handle_key(Key::Right, ctx);
+            s.handle_key(Key::Right, ctx);
+            s.handle_key(Key::Down, ctx);
+            s.handle_key(Key::Right, ctx);
+            s.handle_key(Key::Up, ctx);
         });
-        // Rail 0 remembered col 2.
         assert_eq!(s.focus(), (0, 2));
+        assert!((s.anim_banner.target() - 1.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn up_on_first_rail_focuses_banner() {
+        let s = with_ctx(|s, ctx| {
+            s.handle_key(Key::Up, ctx);
+        });
+        assert!(s.banner_focused());
+        assert_eq!(s.focus().0, 0);
+    }
+
+    #[test]
+    fn banner_wraps_around() {
+        let s = with_ctx(|s, ctx| {
+            s.handle_key(Key::Up, ctx);
+            s.handle_key(Key::Left, ctx);
+            assert_eq!(s.banner_index(), ctx.catalog.banners.len() - 1);
+            assert!((s.anim_banner_slide.target() - (-1.0)).abs() < 1e-4);
+            s.handle_key(Key::Right, ctx);
+            assert_eq!(s.banner_index(), 0);
+            assert!((s.anim_banner_slide.target() - 0.0).abs() < 1e-4);
+        });
+        assert_eq!(s.banner_index(), 0);
+    }
+
+    #[test]
+    fn banner_fast_wrap_keeps_direction() {
+        let s = with_ctx(|s, ctx| {
+            let n = ctx.catalog.banners.len();
+            s.handle_key(Key::Up, ctx);
+            // Race through a full loop without waiting for settles.
+            for _ in 0..n {
+                s.handle_key(Key::Right, ctx);
+            }
+            assert_eq!(s.banner_index(), 0);
+            assert!((s.anim_banner_slide.target() - n as f32).abs() < 1e-4);
+            // Next step must keep going forward (n+1), not reverse toward 1.
+            s.handle_key(Key::Right, ctx);
+            assert_eq!(s.banner_index(), 1);
+            assert!((s.anim_banner_slide.target() - (n as f32 + 1.0)).abs() < 1e-4);
+            s.handle_key(Key::Right, ctx);
+            assert_eq!(s.banner_index(), 2);
+            assert!((s.anim_banner_slide.target() - (n as f32 + 2.0)).abs() < 1e-4);
+        });
+        assert_eq!(s.banner_index(), 2);
+    }
+
+    #[test]
+    fn banner_left_right_and_down_to_rails() {
+        let s = with_ctx(|s, ctx| {
+            s.handle_key(Key::Up, ctx);
+            s.handle_key(Key::Right, ctx);
+            s.handle_key(Key::Right, ctx);
+            assert_eq!(s.banner_index(), 2);
+            assert!((s.anim_banner_slide.target() - 2.0).abs() < 1e-4);
+            s.handle_key(Key::Down, ctx);
+        });
+        assert!(!s.banner_focused());
+        assert_eq!(s.banner_index(), 2);
+        assert_eq!(s.focus(), (0, 0));
     }
 
     #[test]

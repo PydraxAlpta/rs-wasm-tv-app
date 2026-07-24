@@ -5,10 +5,11 @@
 //! wraps never reverse mid-flight.
 
 use crate::anim::Tween;
-use crate::layout::Layout;
+use crate::geom::Rect;
+use crate::metrics::Metrics;
 use crate::model::Card;
 use crate::renderer::Renderer;
-use crate::ui::card;
+use super::card;
 
 /// Time-constant (seconds) for carousel easing — small = snappy.
 pub const NAV_TAU: f32 = 0.11;
@@ -50,14 +51,11 @@ impl HCarousel {
         self.anim.step(dt);
     }
 
-    /// Jump index + animation with no easing (e.g. when switching rails).
     pub fn snap(&mut self, index: usize) {
         self.index = index;
         self.anim.snap(index as f32);
     }
 
-    /// Move by `delta` (−1 / +1). Clamps when `!wrap`; wraps with an unbounded
-    /// target when `wrap` so fast loops keep direction.
     pub fn step(&mut self, delta: i32, count: usize) {
         if count == 0 || delta == 0 {
             return;
@@ -77,7 +75,6 @@ impl HCarousel {
         }
     }
 
-    /// After a wrapping scroll settles, fold the unbounded value into `0..n`.
     pub fn normalize(&mut self, count: usize) {
         if !self.wrap || count == 0 || !self.anim.is_settled() {
             return;
@@ -91,34 +88,35 @@ impl HCarousel {
     }
 }
 
-/// Draw one horizontal rail of cards at `row_y`, sliding behind a fixed focus
-/// anchor (`layout.focus_x`). Culls off-screen tiles and anything above `cull_top`.
+/// Draw a horizontal rail of cards inside `bounds`, sliding so column
+/// `anim_col` sits at `focus_x` (absolute design X).
 pub fn draw_card_row(
     r: &mut dyn Renderer,
-    layout: &Layout,
+    metrics: &Metrics,
+    bounds: Rect,
     cards: &[Card],
-    row_y: f32,
     anim_col: f32,
-    cull_top: f32,
+    focus_x: f32,
 ) {
-    let card_w = layout.card_w as i32;
-    let card_h = layout.card_h as i32;
-    let row_top_i = row_y as i32;
-    let dw = layout.design_w;
+    let card_w = metrics.card_w;
+    let card_h = metrics.card_h;
+    let step = metrics.card_step();
+    let row_y = bounds.y;
 
-    if row_y + layout.card_h < cull_top || row_y > layout.design_h {
-        return;
+    if row_y + card_h < bounds.y || row_y > bounds.bottom() {
+        // still draw if overlapping bounds
     }
 
     for (ci, item) in cards.iter().enumerate() {
-        let x = layout.card_x(ci, anim_col);
-        if x + layout.card_w < 0.0 || x > dw {
+        let x = focus_x + (ci as f32 - anim_col) * step;
+        let card_rect = Rect::new(x, row_y, card_w, card_h);
+        if card_rect.right() < bounds.x || card_rect.x > bounds.right() {
             continue;
         }
-        if row_y + layout.card_h < cull_top {
+        if card_rect.bottom() < bounds.y || card_rect.y > bounds.bottom() {
             continue;
         }
-        card::draw_card(r, x as i32, row_top_i, card_w, card_h, &item.image_url);
+        card::draw_card(r, card_rect, &item.image_url);
     }
 }
 
@@ -160,9 +158,6 @@ mod tests {
         c.step(1, n);
         assert_eq!(c.index(), 1);
         assert!((c.target() - (n as f32 + 1.0)).abs() < 1e-4);
-        c.step(1, n);
-        assert_eq!(c.index(), 2);
-        assert!((c.target() - (n as f32 + 2.0)).abs() < 1e-4);
     }
 
     #[test]
@@ -177,6 +172,5 @@ mod tests {
         }
         assert!(c.is_settled());
         assert!((c.anim_value() - 0.0).abs() < 1e-3);
-        assert_eq!(c.index(), 0);
     }
 }

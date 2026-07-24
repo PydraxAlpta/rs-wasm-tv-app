@@ -1,13 +1,14 @@
 //! rs-wasm-leanback: a retained-mode WASM TV UI (carousels + video player)
 //! rendered with WebGL2 via raw `web-sys`.
 //!
-//! The core layers (`model`, `layout`, `anim`, `screen`, `ui`, `renderer`,
+//! Core layers (`model`, `geom`, `metrics`, `anim`, `screen`, `ui`, `renderer`,
 //! `theme`) are platform-agnostic and unit-testable off-wasm. Browser glue
 //! lives in `wasm` and is compiled only for `wasm32`.
 
 pub mod anim;
 pub mod buffer;
-pub mod layout;
+pub mod geom;
+pub mod metrics;
 pub mod model;
 pub mod renderer;
 pub mod screen;
@@ -15,7 +16,7 @@ pub mod theme;
 pub mod ui;
 
 pub use buffer::Color;
-pub use layout::Layout;
+pub use metrics::{Layout, Metrics};
 pub use model::Catalog;
 pub use renderer::Renderer;
 

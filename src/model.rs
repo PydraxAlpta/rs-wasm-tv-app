@@ -40,7 +40,7 @@ impl Catalog {
     pub fn sample() -> Self {
         const BANNER_COUNT: usize = 5;
         const RAIL_COUNT: usize = 20;
-        const PER_RAIL: usize = 10;
+        const PER_RAIL: usize = 20;
         // Wide hero art; renderer stretches to the banner rect.
         const BANNER_W: u32 = 1920;
         const BANNER_H: u32 = 600;
@@ -87,7 +87,7 @@ mod tests {
         assert_eq!(cat.banners.len(), 5);
         assert_eq!(cat.rails.len(), 20);
         for rail in &cat.rails {
-            assert_eq!(rail.cards.len(), 10);
+            assert_eq!(rail.cards.len(), 20);
         }
     }
 

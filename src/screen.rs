@@ -2,11 +2,10 @@
 //!
 //! Screens draw through the [`Renderer`] trait and drive video playback through
 //! the [`VideoSink`] trait, so they contain no `web-sys` code and are unit
-//! testable off-wasm. On wasm, `VideoSink` is backed by a JS `PlayerAdapter`
-//! (HTML5 stub or a TV stream library). New screens implement [`Screen`] and
-//! are pushed/popped via [`Transition`].
+//! testable off-wasm. On wasm, `VideoSink` is backed by a JS `PlayerAdapter`.
+//! New screens implement [`Screen`] and are pushed/popped via [`Transition`].
 
-use crate::layout::Layout;
+use crate::metrics::Metrics;
 use crate::model::Catalog;
 use crate::renderer::Renderer;
 
@@ -21,8 +20,7 @@ pub enum Key {
     Back,
 }
 
-/// Playback surface a screen can drive. Implemented by the wasm layer over an
-/// `HtmlVideoElement`; stubbed in tests.
+/// Playback surface a screen can drive.
 pub trait VideoSink {
     fn load_and_play(&mut self, url: &str);
     fn play(&mut self);
@@ -37,7 +35,7 @@ pub trait VideoSink {
 /// Shared services handed to a screen each update/render/key call.
 pub struct Ctx<'a> {
     pub catalog: &'a Catalog,
-    pub layout: &'a Layout,
+    pub metrics: &'a Metrics,
     pub video: &'a mut dyn VideoSink,
 }
 

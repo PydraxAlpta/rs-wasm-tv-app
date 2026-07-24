@@ -1,12 +1,9 @@
-//! UI screens and reusable widgets built on the retained-mode screen stack.
+//! UI layer: reusable components and full-screen pages.
 
-pub mod banner;
-pub mod browse;
-pub mod card;
-pub mod carousel;
-pub mod player;
+pub mod components;
+pub mod pages;
 
-pub use banner::BannerCarousel;
-pub use browse::BrowseScreen;
-pub use carousel::HCarousel;
-pub use player::PlayerScreen;
+pub use components::{
+    BannerCarousel, Flex, FocusResult, HCarousel, Widget,
+};
+pub use pages::{BrowseScreen, PlayerScreen};

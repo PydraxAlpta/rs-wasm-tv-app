@@ -21,7 +21,7 @@ use crate::renderer::Renderer;
 use crate::screen::{Ctx, Key, Screen, Transition};
 use crate::ui::BrowseScreen;
 use crate::utils::set_panic_hook;
-use crate::{Catalog, Color, Layout, DESIGN_HEIGHT, DESIGN_WIDTH};
+use crate::{Catalog, Color, Metrics, DESIGN_HEIGHT, DESIGN_WIDTH};
 
 use js_sys::Reflect;
 use wasm_bindgen::prelude::*;
@@ -42,7 +42,7 @@ struct App {
     renderer: WebGl2Renderer,
     video: JsPlayerSink,
     catalog: Catalog,
-    layout: Layout,
+    metrics: Metrics,
     stack: Vec<Box<dyn Screen>>,
     last_ts: Option<f64>,
     perf_hud: HtmlElement,
@@ -62,20 +62,20 @@ impl App {
         let work_ms = {
             let work_start = performance_now();
 
-            // Split-borrow the fields so `Ctx` can hold the catalog/layout/video
+            // Split-borrow the fields so `Ctx` can hold the catalog/metrics/video
             // while the renderer is used independently.
             let App {
                 renderer,
                 video,
                 catalog,
-                layout,
+                metrics,
                 stack,
                 ..
             } = self;
             let dt = (frame_ms / 1000.0) as f32;
             let mut ctx = Ctx {
                 catalog,
-                layout,
+                metrics,
                 video,
             };
             if let Some(top) = stack.last_mut() {
@@ -120,13 +120,13 @@ impl App {
         let App {
             video,
             catalog,
-            layout,
+            metrics,
             stack,
             ..
         } = self;
         let mut ctx = Ctx {
             catalog,
-            layout,
+            metrics,
             video,
         };
         let transition = match stack.last_mut() {
@@ -175,7 +175,7 @@ pub fn setup_app(root: HtmlElement, player: JsPlayer) {
         renderer,
         video: JsPlayerSink::new(player),
         catalog: Catalog::sample(),
-        layout: Layout::tv(),
+        metrics: Metrics::tv(),
         stack: vec![Box::new(BrowseScreen::new())],
         last_ts: None,
         perf_hud,

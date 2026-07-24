@@ -1,13 +1,22 @@
-//! Player screen: drives the DOM `<video>` (which shows through the transparent
-//! GL canvas) and draws a control bar over it — progress, play/pause and title.
+//! Player screen: video underlay + bottom control chrome as a widget tree.
+//!
+//! ```text
+//! Column
+//!   Spacer (Grow)     — transparent; <video> shows through
+//!   PlayerChrome      — title, scrubber, hints (horizontally inset)
+//! ```
 
 use crate::buffer::Color;
+use crate::geom::{Insets, Rect};
 use crate::model::SAMPLE_VIDEO_URL;
 use crate::renderer::Renderer;
 use crate::screen::{Ctx, Key, Screen, Transition};
 use crate::theme;
+use crate::ui::components::containers::layout_column;
+use crate::ui::components::widget::{Flex, Widget};
 
 const SEEK_STEP: f64 = 5.0;
+const BAR_H: f32 = 150.0;
 
 pub struct PlayerScreen {
     title: String,
@@ -64,21 +73,71 @@ impl Screen for PlayerScreen {
     }
 
     fn render(&mut self, r: &mut dyn Renderer, ctx: &mut Ctx) {
-        // No full-screen fill: the video plays behind the transparent canvas.
-        let l = ctx.layout;
-        let dw = l.design_w as i32;
-        let margin = l.safe_margin as i32;
+        let full = Rect::design();
+        let margin = ctx.metrics.safe_margin;
 
-        let bar_h = 150;
-        let bar_top = l.design_h as i32 - bar_h - margin / 2;
+        let mut spacer = PlayerSpacer {
+            bounds: Rect::new(0.0, 0.0, 0.0, 0.0),
+        };
+        let mut chrome = PlayerChrome {
+            title: self.title.clone(),
+            bounds: Rect::new(0.0, 0.0, 0.0, 0.0),
+        };
 
-        // Scrim so controls stay legible over bright video.
-        r.fill_rect(0, bar_top - 40, dw, bar_h + 80, theme::SCRIM);
+        {
+            let sp = &mut spacer as &mut dyn Widget;
+            let ch = &mut chrome as &mut dyn Widget;
+            layout_column(full, 0.0, &mut [sp, ch]);
+        }
 
-        // Title.
-        r.draw_text(margin, bar_top, 44, theme::TEXT, &self.title);
+        let bar = chrome.bounds().inset(Insets::vh(0.0, margin));
+        chrome.layout(bar);
+        chrome.render(r, ctx);
+    }
+}
 
-        // Scrub track + fill.
+/// Transparent grow region so the video underlay remains visible.
+struct PlayerSpacer {
+    bounds: Rect,
+}
+
+impl Widget for PlayerSpacer {
+    fn flex(&self) -> Flex {
+        Flex::Grow(1.0)
+    }
+
+    fn layout(&mut self, bounds: Rect) {
+        self.bounds = bounds;
+    }
+
+    fn render(&self, _r: &mut dyn Renderer, _ctx: &Ctx) {}
+
+    fn bounds(&self) -> Rect {
+        self.bounds
+    }
+}
+
+struct PlayerChrome {
+    title: String,
+    bounds: Rect,
+}
+
+impl Widget for PlayerChrome {
+    fn flex(&self) -> Flex {
+        Flex::Fixed(BAR_H)
+    }
+
+    fn layout(&mut self, bounds: Rect) {
+        self.bounds = bounds;
+    }
+
+    fn render(&self, r: &mut dyn Renderer, ctx: &Ctx) {
+        let full_w = crate::DESIGN_WIDTH as i32;
+        let (bx, by, bw, bh) = self.bounds.as_i32();
+
+        r.fill_rect(0, by - 40, full_w, bh + 80, theme::SCRIM);
+        r.draw_text(bx, by, 44, theme::TEXT, &self.title);
+
         let cur = ctx.video.current_time();
         let dur = ctx.video.duration();
         let frac = if dur > 0.0 {
@@ -86,33 +145,41 @@ impl Screen for PlayerScreen {
         } else {
             0.0
         };
-        let track_x = margin;
-        let track_w = dw - 2 * margin;
-        let track_y = bar_top + 74;
+
+        let track_y = by + 74;
         let track_h = 8;
-        r.fill_rect(track_x, track_y, track_w, track_h, theme::TRACK);
-        r.fill_rect(track_x, track_y, (track_w as f32 * frac) as i32, track_h, theme::FOCUS);
-        // Playhead knob.
-        let knob_x = track_x + (track_w as f32 * frac) as i32;
+        r.fill_rect(bx, track_y, bw, track_h, theme::TRACK);
+        r.fill_rect(
+            bx,
+            track_y,
+            (bw as f32 * frac) as i32,
+            track_h,
+            theme::FOCUS,
+        );
+        let knob_x = bx + (bw as f32 * frac) as i32;
         r.fill_circle(knob_x, track_y + track_h / 2, 10, theme::FOCUS);
 
-        // State + timecodes.
-        let state = if ctx.video.is_paused() { "❚❚ Paused" } else { "▶ Playing" };
+        let state = if ctx.video.is_paused() {
+            "❚❚ Paused"
+        } else {
+            "▶ Playing"
+        };
         let line = format!("{state}    {} / {}", fmt_time(cur), fmt_time(dur));
-        r.draw_text(track_x, track_y + 22, 26, theme::TEXT_DIM, &line);
-
-        // Hint.
+        r.draw_text(bx, track_y + 22, 26, theme::TEXT_DIM, &line);
         r.draw_text(
-            track_x,
+            bx,
             track_y + 60,
             22,
             Color::rgb(140, 140, 150),
             "Enter: play/pause   ◀ ▶: seek 5s   Back: browse",
         );
     }
+
+    fn bounds(&self) -> Rect {
+        self.bounds
+    }
 }
 
-/// Seconds → `M:SS` (or `H:MM:SS`).
 fn fmt_time(secs: f64) -> String {
     if !secs.is_finite() || secs < 0.0 {
         return "0:00".to_string();

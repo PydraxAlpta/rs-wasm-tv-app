@@ -1,6 +1,8 @@
 //! WebGL2 backend: batched colored lines/triangles + textured image/text quads.
 
-use std::collections::HashMap;
+use std::num::NonZeroUsize;
+
+use lru::LruCache;
 
 use super::image_cache::{ImageCache, ImageCacheHandle};
 use crate::buffer::Color;
@@ -17,6 +19,10 @@ use web_sys::{
 const CIRCLE_SEGMENTS: i32 = 64;
 const FLOATS_PER_VERT: usize = 6;
 const FLOATS_PER_TEX_VERT: usize = 4; // x, y, u, v
+/// Match [`super::image_cache`] — visible rails + neighbors without thrashing.
+const IMAGE_TEX_CAP: usize = 96;
+/// Titles / metadata strings churn as focus moves; keep a larger text budget.
+const TEXT_TEX_CAP: usize = 192;
 
 const VERT_SRC: &str = r#"#version 300 es
 precision highp float;
@@ -69,9 +75,9 @@ pub struct WebGl2Renderer {
     tex_vao: WebGlVertexArrayObject,
     tex_vbo: WebGlBuffer,
     tex_uniform: WebGlUniformLocation,
-    textures: HashMap<String, WebGlTexture>,
+    textures: LruCache<String, WebGlTexture>,
     /// Cached rasterized system-font text → (texture, width, height).
-    text_textures: HashMap<String, (WebGlTexture, i32, i32)>,
+    text_textures: LruCache<String, (WebGlTexture, i32, i32)>,
     images: ImageCacheHandle,
     width: f32,
     height: f32,
@@ -145,8 +151,8 @@ impl WebGl2Renderer {
             tex_vao,
             tex_vbo,
             tex_uniform,
-            textures: HashMap::new(),
-            text_textures: HashMap::new(),
+            textures: LruCache::new(NonZeroUsize::new(IMAGE_TEX_CAP).expect("cap > 0")),
+            text_textures: LruCache::new(NonZeroUsize::new(TEXT_TEX_CAP).expect("cap > 0")),
             images,
             width: width as f32,
             height: height as f32,
@@ -225,64 +231,71 @@ impl WebGl2Renderer {
         gl.bind_buffer(WebGl2RenderingContext::ARRAY_BUFFER, None);
     }
 
-    fn texture_for(&mut self, url: &str, image: &HtmlImageElement) -> Option<&WebGlTexture> {
-        if !self.textures.contains_key(url) {
-            let gl = &self.gl;
-            let texture = gl.create_texture()?;
-            gl.bind_texture(WebGl2RenderingContext::TEXTURE_2D, Some(&texture));
-            gl.pixel_storei(WebGl2RenderingContext::UNPACK_FLIP_Y_WEBGL, 1);
-            gl.tex_parameteri(
-                WebGl2RenderingContext::TEXTURE_2D,
-                WebGl2RenderingContext::TEXTURE_WRAP_S,
-                WebGl2RenderingContext::CLAMP_TO_EDGE as i32,
-            );
-            gl.tex_parameteri(
-                WebGl2RenderingContext::TEXTURE_2D,
-                WebGl2RenderingContext::TEXTURE_WRAP_T,
-                WebGl2RenderingContext::CLAMP_TO_EDGE as i32,
-            );
-            gl.tex_parameteri(
-                WebGl2RenderingContext::TEXTURE_2D,
-                WebGl2RenderingContext::TEXTURE_MIN_FILTER,
-                WebGl2RenderingContext::LINEAR as i32,
-            );
-            gl.tex_parameteri(
-                WebGl2RenderingContext::TEXTURE_2D,
-                WebGl2RenderingContext::TEXTURE_MAG_FILTER,
-                WebGl2RenderingContext::LINEAR as i32,
-            );
-
-            // web-sys overload for HTMLImageElement
-            if gl
-                .tex_image_2d_with_u32_and_u32_and_html_image_element(
-                    WebGl2RenderingContext::TEXTURE_2D,
-                    0,
-                    WebGl2RenderingContext::RGBA as i32,
-                    WebGl2RenderingContext::RGBA,
-                    WebGl2RenderingContext::UNSIGNED_BYTE,
-                    image,
-                )
-                .is_err()
-            {
-                return None;
-            }
-
-            gl.bind_texture(WebGl2RenderingContext::TEXTURE_2D, None);
-            self.textures.insert(url.to_string(), texture);
+    fn texture_for(&mut self, url: &str, image: &HtmlImageElement) -> Option<WebGlTexture> {
+        if let Some(texture) = self.textures.get(url) {
+            return Some(texture.clone());
         }
-        self.textures.get(url)
+
+        let gl = &self.gl;
+        let texture = gl.create_texture()?;
+        gl.bind_texture(WebGl2RenderingContext::TEXTURE_2D, Some(&texture));
+        gl.pixel_storei(WebGl2RenderingContext::UNPACK_FLIP_Y_WEBGL, 1);
+        gl.tex_parameteri(
+            WebGl2RenderingContext::TEXTURE_2D,
+            WebGl2RenderingContext::TEXTURE_WRAP_S,
+            WebGl2RenderingContext::CLAMP_TO_EDGE as i32,
+        );
+        gl.tex_parameteri(
+            WebGl2RenderingContext::TEXTURE_2D,
+            WebGl2RenderingContext::TEXTURE_WRAP_T,
+            WebGl2RenderingContext::CLAMP_TO_EDGE as i32,
+        );
+        gl.tex_parameteri(
+            WebGl2RenderingContext::TEXTURE_2D,
+            WebGl2RenderingContext::TEXTURE_MIN_FILTER,
+            WebGl2RenderingContext::LINEAR as i32,
+        );
+        gl.tex_parameteri(
+            WebGl2RenderingContext::TEXTURE_2D,
+            WebGl2RenderingContext::TEXTURE_MAG_FILTER,
+            WebGl2RenderingContext::LINEAR as i32,
+        );
+
+        // web-sys overload for HTMLImageElement
+        if gl
+            .tex_image_2d_with_u32_and_u32_and_html_image_element(
+                WebGl2RenderingContext::TEXTURE_2D,
+                0,
+                WebGl2RenderingContext::RGBA as i32,
+                WebGl2RenderingContext::RGBA,
+                WebGl2RenderingContext::UNSIGNED_BYTE,
+                image,
+            )
+            .is_err()
+        {
+            return None;
+        }
+
+        gl.bind_texture(WebGl2RenderingContext::TEXTURE_2D, None);
+        if let Some(evicted) = self.textures.put(url.to_string(), texture.clone()) {
+            self.gl.delete_texture(Some(&evicted));
+        }
+        Some(texture)
     }
 
     fn draw_textured_quad(&mut self, x: i32, y: i32, w: i32, h: i32, url: &str) {
-        let Some(image) = ImageCache::html_image(&self.images, url) else {
-            return;
-        };
-        // Ensure texture exists before borrowing self immutably for draw.
-        if self.texture_for(url, &image).is_none() {
+        // Prefer an existing GL texture even if the HTML image was LRU-evicted.
+        if let Some(texture) = self.textures.get(url).cloned() {
+            self.draw_texture_quad(x, y, w, h, &texture);
             return;
         }
 
-        let texture = self.textures.get(url).unwrap().clone();
+        let Some(image) = ImageCache::html_image(&self.images, url) else {
+            return;
+        };
+        let Some(texture) = self.texture_for(url, &image) else {
+            return;
+        };
         self.draw_texture_quad(x, y, w, h, &texture);
     }
 
@@ -420,7 +433,9 @@ impl WebGl2Renderer {
         }
         gl.bind_texture(WebGl2RenderingContext::TEXTURE_2D, None);
 
-        self.text_textures.insert(key, (texture.clone(), w, h));
+        if let Some((evicted, _, _)) = self.text_textures.put(key, (texture.clone(), w, h)) {
+            self.gl.delete_texture(Some(&evicted));
+        }
         Some((texture, w, h))
     }
 }

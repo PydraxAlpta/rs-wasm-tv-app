@@ -36,3 +36,12 @@ description = "Serve the production build"
 dir = "www"
 depends = ["build"]
 run = "pnpm preview"
+
+[tasks.docs]
+description = "Copy www/dist → docs/ for GitHub Pages"
+depends = ["build"]
+run = """
+rm -rf docs
+mkdir -p docs
+cp -R www/dist/. docs/
+"""

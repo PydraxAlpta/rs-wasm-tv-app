@@ -1,0 +1,38 @@
+# mise.toml — tools + tasks for generated projects
+
+[tools]
+node = "24"
+"npm:pnpm" = "11.13.0"
+
+[tasks."dev:wasm"]
+description = "Rebuild pkg/ on Rust changes"
+run = "cargo watch -s 'wasm-pack build --dev'"
+
+[tasks."dev:web"]
+description = "Vite dev server"
+dir = "www"
+run = "pnpm dev"
+
+[tasks.dev]
+description = "Wasm watch + Vite in parallel"
+run = "mise run dev:wasm ::: dev:web"
+
+[tasks."build:wasm"]
+description = "Release wasm-pack build → pkg/"
+run = "wasm-pack build --release"
+
+[tasks."build:web"]
+description = "Vite production build"
+dir = "www"
+depends = ["build:wasm"]
+run = "pnpm build"
+
+[tasks.build]
+description = "Release wasm + frontend"
+depends = ["build:web"]
+
+[tasks.preview]
+description = "Serve the production build"
+dir = "www"
+depends = ["build"]
+run = "pnpm preview"

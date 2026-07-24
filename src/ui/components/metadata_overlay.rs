@@ -1,6 +1,6 @@
-//! Full-page metadata overlay for a selected card / banner.
+//! Metadata overlay for a selected card / banner.
 //!
-//! Slides up from below to cover the entire design surface.
+//! Slides up from below to cover the browse content under the top nav.
 
 use crate::anim::Tween;
 use crate::buffer::Color;
@@ -29,7 +29,7 @@ pub struct MetadataItem {
 /// Full-screen page with poster, filler metadata, and a focused Play action.
 pub struct MetadataOverlay {
     item: Option<MetadataItem>,
-    /// 0 = off-screen below, 1 = fully covering the viewport.
+    /// 0 = off-screen below, 1 = fully covering the content area under the nav.
     slide: Tween,
     /// True while open or still animating closed (so we keep painting / eating keys).
     active: bool,
@@ -330,8 +330,15 @@ mod tests {
     }
 
     #[test]
-    fn page_covers_full_design_when_open() {
+    fn page_covers_content_below_header_when_open() {
+        let header_h = 140.0;
         let mut o = MetadataOverlay::new();
+        o.layout(Rect::new(
+            0.0,
+            header_h,
+            crate::DESIGN_WIDTH as f32,
+            crate::DESIGN_HEIGHT as f32 - header_h,
+        ));
         o.open(MetadataItem {
             title: "T".into(),
             image_url: "u".into(),
@@ -340,10 +347,9 @@ mod tests {
         });
         o.slide.snap(1.0);
         let page = o.page_rect();
-        let full = Rect::design();
         assert!((page.x - 0.0).abs() < 1e-3);
-        assert!((page.y - 0.0).abs() < 1e-3);
-        assert!((page.w - full.w).abs() < 1e-3);
-        assert!((page.h - full.h).abs() < 1e-3);
+        assert!((page.y - header_h).abs() < 1e-3);
+        assert!((page.w - crate::DESIGN_WIDTH as f32).abs() < 1e-3);
+        assert!((page.h - (crate::DESIGN_HEIGHT as f32 - header_h)).abs() < 1e-3);
     }
 }

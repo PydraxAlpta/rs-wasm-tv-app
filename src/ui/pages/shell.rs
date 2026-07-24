@@ -148,7 +148,11 @@ impl Screen for MainShell {
                     }
                 }
                 self.sync_focus_flags();
-                Transition::None
+                if key == Key::Back {
+                    Transition::Pop
+                } else {
+                    Transition::None
+                }
             }
             ShellFocus::Content => {
                 self.ensure_page(self.nav.selected());
@@ -165,7 +169,13 @@ impl Screen for MainShell {
                     }
                     PageKeyResult::MoveOut(_) | PageKeyResult::None => {
                         self.sync_focus_flags();
-                        Transition::None
+                        // Back on browse (no overlay) pops the root → app exit.
+                        // Overlay Back is handled above and returns None without Pop.
+                        if key == Key::Back {
+                            Transition::Pop
+                        } else {
+                            Transition::None
+                        }
                     }
                 }
             }
@@ -278,5 +288,43 @@ mod tests {
             s.handle_key(Key::Down, ctx);
         });
         assert!(!s.nav_focused());
+    }
+
+    #[test]
+    fn back_on_browse_pops_root() {
+        let cat = Catalog::sample();
+        let metrics = Metrics::tv();
+        let mut video = NullSink;
+        let mut ctx = Ctx {
+            catalog: &cat,
+            metrics: &metrics,
+            video: &mut video,
+        };
+        let mut shell = MainShell::new();
+        assert!(matches!(
+            Screen::handle_key(&mut shell, Key::Back, &mut ctx),
+            Transition::Pop
+        ));
+    }
+
+    #[test]
+    fn back_on_metadata_does_not_pop() {
+        let cat = Catalog::sample();
+        let metrics = Metrics::tv();
+        let mut video = NullSink;
+        let mut ctx = Ctx {
+            catalog: &cat,
+            metrics: &metrics,
+            video: &mut video,
+        };
+        let mut shell = MainShell::new();
+        Screen::handle_key(&mut shell, Key::Down, &mut ctx);
+        Screen::handle_key(&mut shell, Key::Enter, &mut ctx);
+        assert!(shell.active_page_mut().unwrap().overlay_open());
+        assert!(matches!(
+            Screen::handle_key(&mut shell, Key::Back, &mut ctx),
+            Transition::None
+        ));
+        assert!(!shell.active_page_mut().unwrap().overlay_open());
     }
 }

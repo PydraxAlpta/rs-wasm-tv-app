@@ -142,8 +142,9 @@ impl App {
                 stack.pop();
                 stack.is_empty()
             }
-            // Back on the root (browse) screen exits the app.
-            Transition::None => key == Key::Back && stack.len() <= 1,
+            // Back on the root screen (no overlay) pops → empty stack → exit.
+            // Overlay/metadata Back is consumed as Transition::None and must not exit.
+            Transition::None => false,
         }
     }
 }

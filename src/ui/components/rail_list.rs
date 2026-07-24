@@ -121,8 +121,14 @@ impl Widget for RailList {
                 );
             }
 
-            let row_bounds = Rect::new(self.bounds.x, row_top, self.bounds.w, card_h);
-            // Focus slot is the left edge of this widget's content bounds.
+            let row_bounds = Rect::new(
+                self.bounds.x - m.safe_margin,
+                row_top,
+                self.bounds.w + 2.0 * m.safe_margin,
+                card_h,
+            );
+            // Focus slot stays at the content left edge; cull window includes
+            // the safe margins so scrolled-off neighbors stay visible there.
             carousel::draw_card_row(r, m, row_bounds, &rail.cards, col_off, self.bounds.x);
         }
 

@@ -131,7 +131,9 @@ impl CatalogPage {
         let banner = &mut self.banner as &mut dyn Widget;
         let rails = &mut self.rails as &mut dyn Widget;
         layout_column(content, 0.0, &mut [banner, rails]);
-        self.overlay.layout(self.page_bounds);
+        // Overlay sits under the header so the nav stays visible.
+        let overlay_bounds = Rect::new(page_x, nav_h, full_w, (full_h - nav_h).max(0.0));
+        self.overlay.layout(overlay_bounds);
     }
 
     pub fn update(&mut self, dt: f32, ctx: &mut Ctx) {
@@ -418,7 +420,7 @@ mod tests {
         let item = s.overlay.item().unwrap();
         assert_eq!(item.rail_index, 0);
         assert_eq!(item.card_index, 1);
-        assert!(item.title.contains("Rail 1"));
+        assert_eq!(item.title, "Glass Orchard");
     }
 
     #[test]

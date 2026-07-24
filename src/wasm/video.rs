@@ -1,61 +1,96 @@
-//! `VideoSink` backed by a DOM `<video>` element.
+//! `VideoSink` that forwards playback to a JS `PlayerAdapter`.
+//!
+//! Rust creates `#player-video`; JS owns all subsequent media control. The
+//! adapter discovers the element by id (TV: at most one underlay).
 
 use crate::screen::VideoSink;
-use web_sys::HtmlVideoElement;
+use wasm_bindgen::prelude::*;
 
-pub struct HtmlVideoSink {
-    el: HtmlVideoElement,
+#[wasm_bindgen(typescript_custom_section)]
+const TS_PLAYER_ADAPTER: &'static str = r#"
+export interface PlayerAdapter {
+  loadAndPlay(url: string): void;
+  play(): void;
+  pause(): void;
+  isPaused(): boolean;
+  currentTime(): number;
+  duration(): number;
+  seek(t: number): void;
+  setVisible(visible: boolean): void;
+}
+"#;
+
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(typescript_type = "PlayerAdapter")]
+    pub type JsPlayer;
+
+    #[wasm_bindgen(method, js_name = loadAndPlay)]
+    fn load_and_play(this: &JsPlayer, url: &str);
+
+    #[wasm_bindgen(method)]
+    fn play(this: &JsPlayer);
+
+    #[wasm_bindgen(method)]
+    fn pause(this: &JsPlayer);
+
+    #[wasm_bindgen(method, js_name = isPaused)]
+    fn is_paused(this: &JsPlayer) -> bool;
+
+    #[wasm_bindgen(method, js_name = currentTime)]
+    fn current_time(this: &JsPlayer) -> f64;
+
+    #[wasm_bindgen(method)]
+    fn duration(this: &JsPlayer) -> f64;
+
+    #[wasm_bindgen(method)]
+    fn seek(this: &JsPlayer, t: f64);
+
+    #[wasm_bindgen(method, js_name = setVisible)]
+    fn set_visible(this: &JsPlayer, visible: bool);
 }
 
-impl HtmlVideoSink {
-    pub fn new(el: HtmlVideoElement) -> Self {
-        Self { el }
+/// Thin bridge: screens keep talking to [`VideoSink`]; calls land in JS.
+pub struct JsPlayerSink {
+    player: JsPlayer,
+}
+
+impl JsPlayerSink {
+    pub fn new(player: JsPlayer) -> Self {
+        Self { player }
     }
 }
 
-impl VideoSink for HtmlVideoSink {
+impl VideoSink for JsPlayerSink {
     fn load_and_play(&mut self, url: &str) {
-        // `current_src` is the resolved absolute URL; only reload if different.
-        if self.el.current_src() != url {
-            self.el.set_src(url);
-            self.el.load();
-        }
-        let _ = self.el.play();
+        self.player.load_and_play(url);
     }
 
     fn play(&mut self) {
-        let _ = self.el.play();
+        self.player.play();
     }
 
     fn pause(&mut self) {
-        let _ = self.el.pause();
+        self.player.pause();
     }
 
     fn is_paused(&self) -> bool {
-        self.el.paused()
+        self.player.is_paused()
     }
 
     fn current_time(&self) -> f64 {
-        self.el.current_time()
+        self.player.current_time()
     }
 
     fn duration(&self) -> f64 {
-        let d = self.el.duration();
-        if d.is_finite() {
-            d
-        } else {
-            0.0
-        }
+        self.player.duration()
     }
 
     fn seek(&mut self, t: f64) {
-        self.el.set_current_time(t);
+        self.player.seek(t);
     }
 
     fn set_visible(&mut self, visible: bool) {
-        let _ = self
-            .el
-            .style()
-            .set_property("display", if visible { "block" } else { "none" });
+        self.player.set_visible(visible);
     }
 }

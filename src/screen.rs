@@ -2,8 +2,9 @@
 //!
 //! Screens draw through the [`Renderer`] trait and drive video playback through
 //! the [`VideoSink`] trait, so they contain no `web-sys` code and are unit
-//! testable off-wasm. New screens (details, settings, …) implement [`Screen`]
-//! and are pushed/popped via [`Transition`].
+//! testable off-wasm. On wasm, `VideoSink` is backed by a JS `PlayerAdapter`
+//! (HTML5 stub or a TV stream library). New screens implement [`Screen`] and
+//! are pushed/popped via [`Transition`].
 
 use crate::layout::Layout;
 use crate::model::Catalog;

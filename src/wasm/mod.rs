@@ -14,7 +14,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use image_cache::ImageCache;
-use video::HtmlVideoSink;
+use video::{JsPlayer, JsPlayerSink};
 use webgl2::WebGl2Renderer;
 
 use crate::renderer::Renderer;
@@ -27,8 +27,7 @@ use js_sys::Reflect;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use web_sys::{
-    HtmlCanvasElement, HtmlElement, HtmlVideoElement, KeyboardEvent, WebGl2RenderingContext,
-    WebGlContextAttributes,
+    HtmlCanvasElement, HtmlElement, KeyboardEvent, WebGl2RenderingContext, WebGlContextAttributes,
 };
 
 /// Transparent clear so the `<video>` underlay shows through in the player.
@@ -36,7 +35,7 @@ const CLEAR: Color = Color::rgba(0, 0, 0, 0);
 
 struct App {
     renderer: WebGl2Renderer,
-    video: HtmlVideoSink,
+    video: JsPlayerSink,
     catalog: Catalog,
     layout: Layout,
     stack: Vec<Box<dyn Screen>>,
@@ -107,8 +106,10 @@ impl App {
     }
 }
 
+/// Boot the leanback UI. `player` is a JS PlayerAdapter that drives
+/// `#player-video` after this function creates the element.
 #[wasm_bindgen(js_name = setupApp)]
-pub fn setup_app(root: HtmlElement) {
+pub fn setup_app(root: HtmlElement, player: JsPlayer) {
     set_panic_hook();
 
     root.set_inner_html(
@@ -123,14 +124,12 @@ pub fn setup_app(root: HtmlElement) {
     canvas.set_height(DESIGN_HEIGHT);
     let gl = webgl2_context(&canvas);
 
-    let video_el = query_el::<HtmlVideoElement>(&root, "#player-video");
-
     let images = ImageCache::new();
     let renderer = WebGl2Renderer::new(gl, DESIGN_WIDTH, DESIGN_HEIGHT, images);
 
     let app = Rc::new(RefCell::new(App {
         renderer,
-        video: HtmlVideoSink::new(video_el),
+        video: JsPlayerSink::new(player),
         catalog: Catalog::sample(),
         layout: Layout::tv(),
         stack: vec![Box::new(BrowseScreen::new())],

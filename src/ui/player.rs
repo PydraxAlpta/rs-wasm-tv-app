@@ -7,7 +7,7 @@ use crate::renderer::Renderer;
 use crate::screen::{Ctx, Key, Screen, Transition};
 use crate::theme;
 
-const SEEK_STEP: f64 = 10.0;
+const SEEK_STEP: f64 = 5.0;
 
 pub struct PlayerScreen {
     title: String,
@@ -107,7 +107,7 @@ impl Screen for PlayerScreen {
             track_y + 60,
             22,
             Color::rgb(140, 140, 150),
-            "Enter: play/pause   ◀ ▶: seek 10s   Back: browse",
+            "Enter: play/pause   ◀ ▶: seek 5s   Back: browse",
         );
     }
 }

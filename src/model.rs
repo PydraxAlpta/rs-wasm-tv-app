@@ -2,8 +2,7 @@
 //! rendering or navigation layers.
 
 /// The single sample clip every card plays (royalty-free test asset).
-pub const SAMPLE_VIDEO_URL: &str =
-    "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4";
+pub const SAMPLE_VIDEO_URL: &str = "https://samplelib.com/mp4/sample-15s-720p.mp4";
 
 /// One selectable tile.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -72,7 +71,11 @@ mod tests {
     #[test]
     fn card_ids_are_unique() {
         let cat = Catalog::sample();
-        let mut ids: Vec<u32> = cat.rails.iter().flat_map(|r| r.cards.iter().map(|c| c.id)).collect();
+        let mut ids: Vec<u32> = cat
+            .rails
+            .iter()
+            .flat_map(|r| r.cards.iter().map(|c| c.id))
+            .collect();
         let count = ids.len();
         ids.sort_unstable();
         ids.dedup();

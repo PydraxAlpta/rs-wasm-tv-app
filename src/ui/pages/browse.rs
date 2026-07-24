@@ -1,6 +1,6 @@
 //! Browse screen: Header + BannerCarousel + RailList as a column tree.
 //!
-//! Banner collapse shrinks its flex height so rails reflow upward.
+//! Enter opens a metadata overlay; Play on the overlay pushes the player.
 
 use crate::geom::{Insets, Rect};
 use crate::renderer::Renderer;
@@ -10,15 +10,17 @@ use crate::ui::components::banner::BannerCarousel;
 use crate::ui::components::containers::layout_column;
 use crate::ui::components::focus::{index_from_zone, zone_from_index, FocusScope, FocusZone};
 use crate::ui::components::header::Header;
-use super::player::PlayerScreen;
+use crate::ui::components::metadata_overlay::{MetadataItem, MetadataOverlay};
 use crate::ui::components::rail_list::RailList;
 use crate::ui::components::widget::{FocusResult, Widget};
+use super::player::PlayerScreen;
 
 pub struct BrowseScreen {
     header: Header,
     banner: BannerCarousel,
     rails: RailList,
     scope: FocusScope,
+    overlay: MetadataOverlay,
 }
 
 impl BrowseScreen {
@@ -28,6 +30,7 @@ impl BrowseScreen {
             banner: BannerCarousel::new(420.0),
             rails: RailList::new(),
             scope: FocusScope::new(index_from_zone(FocusZone::Rails)),
+            overlay: MetadataOverlay::new(),
         }
     }
 
@@ -45,6 +48,10 @@ impl BrowseScreen {
 
     pub fn banner_reveal_target(&self) -> f32 {
         self.banner.reveal_target()
+    }
+
+    pub fn overlay_open(&self) -> bool {
+        self.overlay.is_open()
     }
 
     fn sync_focus_flags(&mut self) {
@@ -70,7 +77,6 @@ impl BrowseScreen {
         self.banner.set_full_height(m.banner_h);
 
         let full = Rect::design();
-        // Full-bleed header band, then horizontally inset content column.
         self.header
             .layout(Rect::new(0.0, 0.0, full.w, m.header_h));
 
@@ -83,6 +89,34 @@ impl BrowseScreen {
         let banner = &mut self.banner as &mut dyn Widget;
         let rails = &mut self.rails as &mut dyn Widget;
         layout_column(content, 0.0, &mut [banner, rails]);
+        self.overlay.layout(full);
+    }
+
+    fn selected_metadata(&self, ctx: &Ctx) -> Option<MetadataItem> {
+        match zone_from_index(self.scope.index()) {
+            FocusZone::Banner => {
+                let i = self.banner.index();
+                ctx.catalog.banners.get(i).map(|b| MetadataItem {
+                    title: b.title.clone(),
+                    image_url: b.image_url.clone(),
+                    rail_index: 0,
+                    card_index: i,
+                })
+            }
+            FocusZone::Rails => {
+                let (ri, ci) = self.rails.focus();
+                ctx.catalog
+                    .rails
+                    .get(ri)
+                    .and_then(|r| r.cards.get(ci))
+                    .map(|c| MetadataItem {
+                        title: c.title.clone(),
+                        image_url: c.image_url.clone(),
+                        rail_index: ri,
+                        card_index: ci,
+                    })
+            }
+        }
     }
 }
 
@@ -97,10 +131,26 @@ impl Screen for BrowseScreen {
         self.sync_banner_reveal();
         self.banner.update(dt, ctx);
         self.rails.update(dt, ctx);
+        self.overlay.update(dt, ctx);
         self.sync_focus_flags();
     }
 
     fn handle_key(&mut self, key: Key, ctx: &mut Ctx) -> Transition {
+        if self.overlay.is_active() {
+            match self.overlay.handle_key(key, ctx) {
+                FocusResult::Activate => {
+                    if let Some(item) = self.overlay.item() {
+                        let title = item.title.clone();
+                        // Keep the metadata page open under the player so Back
+                        // from video returns here instead of the browse grid.
+                        return Transition::Push(Box::new(PlayerScreen::new(title)));
+                    }
+                }
+                FocusResult::Handled | FocusResult::Ignored | FocusResult::MoveOut(_) => {}
+            }
+            return Transition::None;
+        }
+
         self.sync_focus_flags();
         let result = {
             let banner = &mut self.banner as &mut dyn Widget;
@@ -109,7 +159,6 @@ impl Screen for BrowseScreen {
                 .handle_key(key, ctx, &mut [banner, rails])
         };
 
-        // Don't park focus on an empty banner strip.
         if zone_from_index(self.scope.index()) == FocusZone::Banner
             && ctx.catalog.banners.is_empty()
         {
@@ -118,28 +167,11 @@ impl Screen for BrowseScreen {
 
         match result {
             FocusResult::Activate => {
-                let title = match zone_from_index(self.scope.index()) {
-                    FocusZone::Banner => ctx
-                        .catalog
-                        .banners
-                        .get(self.banner.index())
-                        .map(|b| b.title.clone()),
-                    FocusZone::Rails => {
-                        let (ri, ci) = self.rails.focus();
-                        ctx.catalog
-                            .rails
-                            .get(ri)
-                            .and_then(|r| r.cards.get(ci))
-                            .map(|c| c.title.clone())
-                    }
-                };
-                if let Some(title) = title {
-                    return Transition::Push(Box::new(PlayerScreen::new(title)));
+                if let Some(item) = self.selected_metadata(ctx) {
+                    self.overlay.open(item);
                 }
             }
-            FocusResult::MoveOut(Key::Up) => {
-                // Already at top of scope (banner); stay.
-            }
+            FocusResult::MoveOut(Key::Up) => {}
             _ => {}
         }
         self.sync_focus_flags();
@@ -160,8 +192,8 @@ impl Screen for BrowseScreen {
         self.layout_tree(ctx);
         self.rails.render(r, ctx);
         self.banner.render(r, ctx);
-        // Header last so scrolling content never covers the title band.
         self.header.render(r, ctx);
+        self.overlay.render(r, ctx);
     }
 }
 
@@ -211,7 +243,8 @@ mod tests {
                 s.handle_key(Key::Right, ctx);
             }
         });
-        assert_eq!(s.focus(), (0, 9));
+        let last = Catalog::sample().rails[0].cards.len() - 1;
+        assert_eq!(s.focus(), (0, last));
     }
 
     #[test]
@@ -230,7 +263,7 @@ mod tests {
                 s.handle_key(Key::Down, ctx);
             }
         });
-        assert_eq!(s.focus().0, 19);
+        assert_eq!(s.focus().0, Catalog::sample().rails.len() - 1);
         assert!((s.banner_reveal_target() - 0.0).abs() < 1e-4);
     }
 
@@ -300,7 +333,20 @@ mod tests {
     }
 
     #[test]
-    fn enter_pushes_player() {
+    fn enter_opens_metadata_overlay() {
+        let s = with_ctx(|s, ctx| {
+            s.handle_key(Key::Right, ctx);
+            s.handle_key(Key::Enter, ctx);
+        });
+        assert!(s.overlay_open());
+        let item = s.overlay.item().unwrap();
+        assert_eq!(item.rail_index, 0);
+        assert_eq!(item.card_index, 1);
+        assert!(item.title.contains("Rail 1"));
+    }
+
+    #[test]
+    fn overlay_play_pushes_player() {
         let cat = Catalog::sample();
         let metrics = Metrics::tv();
         let mut video = NullSink;
@@ -310,7 +356,25 @@ mod tests {
             video: &mut video,
         };
         let mut screen = BrowseScreen::new();
+        assert!(matches!(
+            screen.handle_key(Key::Enter, &mut ctx),
+            Transition::None
+        ));
+        assert!(screen.overlay_open());
         let t = screen.handle_key(Key::Enter, &mut ctx);
         assert!(matches!(t, Transition::Push(_)));
+        // Metadata stays open under the player.
+        assert!(screen.overlay_open());
+    }
+
+    #[test]
+    fn overlay_back_closes() {
+        let s = with_ctx(|s, ctx| {
+            s.handle_key(Key::Enter, ctx);
+            assert!(s.overlay_open());
+            s.handle_key(Key::Back, ctx);
+        });
+        assert!(!s.overlay_open());
+        assert!(s.overlay.is_active()); // still animating closed
     }
 }

@@ -16,7 +16,7 @@ pub struct Card {
 /// A horizontal carousel of cards.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Rail {
-    pub title: &'static str,
+    pub title: String,
     pub cards: Vec<Card>,
 }
 
@@ -27,24 +27,25 @@ pub struct Catalog {
 }
 
 impl Catalog {
-    /// Demo content: 3 rails × 10 cards, poster art from picsum with fixed
+    /// Demo content: 20 rails × 10 cards, poster art from picsum with fixed
     /// per-card seeds so the same image is stable across reloads.
     pub fn sample() -> Self {
-        const RAIL_TITLES: [&str; 3] = ["Trending Now", "Popular on Leanback", "Continue Watching"];
-        // 16:9 poster art; keep the request small, the renderer stretches to card size.
-        const ART_W: u32 = 480;
-        const ART_H: u32 = 270;
+        const RAIL_COUNT: usize = 20;
         const PER_RAIL: usize = 10;
+        // Portrait poster art (~2:3); renderer stretches to card size.
+        const ART_W: u32 = 400;
+        const ART_H: u32 = 600;
 
-        let mut rails = Vec::with_capacity(RAIL_TITLES.len());
+        let mut rails = Vec::with_capacity(RAIL_COUNT);
         let mut id = 0u32;
-        for (r, &title) in RAIL_TITLES.iter().enumerate() {
+        for r in 0..RAIL_COUNT {
+            let title = format!("Rail {}", r + 1);
             let mut cards = Vec::with_capacity(PER_RAIL);
             for c in 0..PER_RAIL {
                 let seed = format!("lb-r{r}-c{c}");
                 cards.push(Card {
                     id,
-                    title: format!("{title} {}", c + 1),
+                    title: format!("{title} · {}", c + 1),
                     image_url: format!("https://picsum.photos/seed/{seed}/{ART_W}/{ART_H}"),
                 });
                 id += 1;
@@ -62,7 +63,7 @@ mod tests {
     #[test]
     fn sample_has_expected_shape() {
         let cat = Catalog::sample();
-        assert_eq!(cat.rails.len(), 3);
+        assert_eq!(cat.rails.len(), 20);
         for rail in &cat.rails {
             assert_eq!(rail.cards.len(), 10);
         }

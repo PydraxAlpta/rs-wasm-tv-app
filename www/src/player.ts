@@ -25,12 +25,22 @@ export function createHtml5Player(): PlayerAdapter {
   return {
     loadAndPlay(url: string) {
       const el = videoEl();
-      // `currentSrc` is the resolved absolute URL; only reload if different.
-      if (el.currentSrc !== url) {
+      const resolved = new URL(url, document.baseURI).href;
+      const needsLoad = el.currentSrc !== resolved;
+      if (needsLoad) {
         el.src = url;
         el.load();
       }
-      void el.play();
+      // Always restart from 0 (demo cards share one static URL).
+      const start = () => {
+        el.currentTime = 0;
+        void el.play();
+      };
+      if (!needsLoad || el.readyState >= HTMLMediaElement.HAVE_METADATA) {
+        start();
+      } else {
+        el.addEventListener('loadedmetadata', start, { once: true });
+      }
     },
     play() {
       void videoEl().play();

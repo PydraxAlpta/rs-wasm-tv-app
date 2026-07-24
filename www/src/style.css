@@ -51,3 +51,20 @@ body {
 .ui-canvas {
   z-index: 1;
 }
+
+/* Debug overlay — outside the GL path so it doesn't pollute text caches. */
+.perf-hud {
+  position: absolute;
+  top: 0.6%;
+  right: 0.8%;
+  z-index: 2;
+  margin: 0;
+  padding: 0.25em 0.55em;
+  font: 500 1.1vw/1.35 ui-monospace, "Cascadia Code", "SF Mono", Menlo, monospace;
+  color: #e8f0ff;
+  background: rgba(0, 0, 0, 0.55);
+  border-radius: 0.25em;
+  pointer-events: none;
+  white-space: nowrap;
+  user-select: none;
+}

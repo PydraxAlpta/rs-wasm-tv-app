@@ -9,6 +9,9 @@ pub struct Layout {
     /// TV overscan-safe inset from the edges.
     pub safe_margin: f32,
 
+    /// Fixed page-header band height; rails scroll only below this.
+    pub header_h: f32,
+
     pub card_w: f32,
     pub card_h: f32,
     pub card_gap: f32,
@@ -27,17 +30,26 @@ pub struct Layout {
 
 impl Layout {
     pub fn tv() -> Self {
+        let safe_margin = 64.0;
+        let header_h = 140.0;
+        let rail_title_h = 44.0;
+        // Portrait poster tiles (~2:3).
+        let card_w = 200.0;
+        let card_h = 300.0;
         Self {
             design_w: 1920.0,
             design_h: 1080.0,
-            safe_margin: 64.0,
-            card_w: 320.0,
-            card_h: 180.0,
-            card_gap: 28.0,
-            rail_title_h: 44.0,
-            rail_step: 320.0,
-            focus_x: 64.0,
-            focus_y: 320.0,
+            safe_margin,
+            header_h,
+            card_w,
+            card_h,
+            card_gap: 24.0,
+            rail_title_h,
+            // Title + card + focused-title line + gap before next rail title.
+            rail_step: rail_title_h + card_h + 56.0 + 36.0,
+            focus_x: safe_margin,
+            // First rail's cards sit just under the header + its rail title.
+            focus_y: header_h + rail_title_h + 8.0,
             focus_scale: 1.08,
         }
     }
@@ -78,5 +90,12 @@ mod tests {
         let l = Layout::tv();
         assert!(l.card_x(5, 0.0) > l.card_x(4, 0.0));
         assert!((l.card_x(1, 0.0) - l.card_x(0, 0.0) - l.card_step()).abs() < 1e-4);
+    }
+
+    #[test]
+    fn focus_anchor_sits_below_header() {
+        let l = Layout::tv();
+        assert!(l.focus_y - l.rail_title_h >= l.header_h);
+        assert!(l.card_h > l.card_w); // portrait tiles
     }
 }

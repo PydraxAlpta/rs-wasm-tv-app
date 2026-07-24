@@ -1,11 +1,12 @@
-//! Browse screen: vertically stacked rails of cards with a fixed focus anchor.
+//! Browse screen: vertically stacked rails of portrait cards with a fixed
+//! focus anchor and a static page header.
 //!
 //! Card/rail positions derive from *animated fractional* focused indices
 //! (`anim_col`, `anim_rail`), so the focus frame stays pinned at
-//! `layout.focus_x/focus_y` while the content slides behind it. Vertical moves
-//! and horizontal moves within a rail animate; switching rails snaps the
-//! horizontal offset to that rail's remembered column so it doesn't slide
-//! sideways while moving up/down.
+//! `layout.focus_x/focus_y` while the content slides behind it — only in the
+//! area below `layout.header_h`. Vertical moves and horizontal moves within a
+//! rail animate; switching rails snaps the horizontal offset to that rail's
+//! remembered column so it doesn't slide sideways while moving up/down.
 
 use crate::anim::Tween;
 use crate::renderer::Renderer;
@@ -38,7 +39,10 @@ impl BrowseScreen {
 
     /// Currently focused (rail, column) — exposed for tests.
     pub fn focus(&self) -> (usize, usize) {
-        (self.focus_rail, self.focus_col.get(self.focus_rail).copied().unwrap_or(0))
+        (
+            self.focus_rail,
+            self.focus_col.get(self.focus_rail).copied().unwrap_or(0),
+        )
     }
 
     fn ensure_init(&mut self, ctx: &Ctx) {
@@ -119,14 +123,10 @@ impl Screen for BrowseScreen {
         self.ensure_init(ctx);
         let l = ctx.layout;
         let dw = l.design_w as i32;
-        let dh = l.design_h as i32;
+        let header_h = l.header_h as i32;
 
         // Opaque background (the GL canvas itself is transparent).
-        r.fill_rect(0, 0, dw, dh, theme::BG);
-
-        // Page header in the space above the first rail.
-        let header_y = (l.focus_y - l.rail_title_h - 90.0) as i32;
-        r.draw_text(l.safe_margin as i32, header_y.max(24), 52, theme::HEADER, "Leanback");
+        r.fill_rect(0, 0, dw, l.design_h as i32, theme::BG);
 
         let anim_rail = self.anim_rail.value();
         let card_w = l.card_w as i32;
@@ -134,8 +134,9 @@ impl Screen for BrowseScreen {
 
         for (ri, rail) in ctx.catalog.rails.iter().enumerate() {
             let row_top = l.rail_y(ri, anim_rail);
-            // Cull rails whose card row is fully off-screen vertically.
-            if row_top + l.card_h < 0.0 || row_top > l.design_h {
+            let title_y = row_top - l.rail_title_h;
+            // Cull rails fully above the header band or fully below the screen.
+            if row_top + l.card_h < l.header_h || title_y > l.design_h {
                 continue;
             }
             let row_top_i = row_top as i32;
@@ -146,34 +147,46 @@ impl Screen for BrowseScreen {
                 self.focus_col.get(ri).copied().unwrap_or(0) as f32
             };
 
-            // Rail title above the row.
-            r.draw_text(
-                l.safe_margin as i32,
-                (row_top - l.rail_title_h) as i32,
-                30,
-                theme::RAIL_TITLE,
-                rail.title,
-            );
+            // Rail title (skip if it sits under the header band).
+            if title_y + 30.0 >= l.header_h {
+                r.draw_text(
+                    l.safe_margin as i32,
+                    title_y as i32,
+                    30,
+                    theme::RAIL_TITLE,
+                    &rail.title,
+                );
+            }
 
             for (ci, card) in rail.cards.iter().enumerate() {
-                let x = l.card_x(ci, col_off) as i32;
-                // Horizontal cull.
-                if x + card_w < 0 || x > dw {
+                let x = l.card_x(ci, col_off);
+                // Cull cards outside the visible content area.
+                if x + l.card_w < 0.0 || x > l.design_w {
                     continue;
                 }
+                if row_top + l.card_h < l.header_h || row_top > l.design_h {
+                    continue;
+                }
+                let xi = x as i32;
                 // Placeholder fill (shown until the image finishes loading), then art.
-                r.fill_rect(x, row_top_i, card_w, card_h, theme::CARD_BG);
-                r.draw_image(x, row_top_i, card_w, card_h, &card.image_url);
-                r.stroke_rect(x, row_top_i, card_w, card_h, theme::CARD_BORDER);
+                r.fill_rect(xi, row_top_i, card_w, card_h, theme::CARD_BG);
+                r.draw_image(xi, row_top_i, card_w, card_h, &card.image_url);
+                r.stroke_rect(xi, row_top_i, card_w, card_h, theme::CARD_BORDER);
             }
         }
 
-        // Focus frame — fixed anchor, drawn last so it sits above the cards.
+        // Focus frame — fixed anchor above the cards.
         let fx = l.focus_x as i32;
         let fy = l.focus_y as i32;
         for i in 0..4 {
             let a = 200u8.saturating_sub(i as u8 * 45);
-            r.stroke_rect(fx - i, fy - i, card_w + 2 * i, card_h + 2 * i, theme::FOCUS.with_alpha(a));
+            r.stroke_rect(
+                fx - i,
+                fy - i,
+                card_w + 2 * i,
+                card_h + 2 * i,
+                theme::FOCUS.with_alpha(a),
+            );
         }
 
         // Focused card title, below the focus frame.
@@ -182,6 +195,17 @@ impl Screen for BrowseScreen {
                 r.draw_text(fx, fy + card_h + 14, 28, theme::TEXT, &card.title);
             }
         }
+
+        // Static header band — painted after rails so scrolling content never
+        // covers the app name.
+        r.fill_rect(0, 0, dw, header_h, theme::BG);
+        r.draw_text(
+            l.safe_margin as i32,
+            (l.safe_margin * 0.55) as i32,
+            52,
+            theme::HEADER,
+            "WASM TV",
+        );
     }
 }
 
@@ -251,7 +275,7 @@ mod tests {
                 s.handle_key(Key::Down, ctx);
             }
         });
-        assert_eq!(s.focus().0, 2); // 3 rails → last index 2
+        assert_eq!(s.focus().0, 19); // 20 rails → last index 19
     }
 
     #[test]

@@ -4,7 +4,7 @@
   <tizen:application id="rsWasmLeanback.App" package="rsWasmLeanback" required_version="2.3"/>
   <content src="index.html"/>
   <feature name="http://tizen.org/feature/screen.size.normal.1080.1920"/>
-  <name>rs-wasm-leanback</name>
+  <name>WASM TV</name>
   <tizen:profile name="tv-samsung"/>
   <tizen:setting screen-orientation="landscape" context-menu="disable"
     background-support="disable" encryption="disable" install-mode="normal"

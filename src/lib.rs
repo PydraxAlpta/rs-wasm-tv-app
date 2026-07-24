@@ -1,4 +1,4 @@
-//! rs-wasm-leanback: a retained-mode TV/leanback UI (carousels + video player)
+//! rs-wasm-leanback: a retained-mode WASM TV UI (carousels + video player)
 //! rendered with WebGL2 via raw `web-sys`.
 //!
 //! The core layers (`model`, `layout`, `anim`, `screen`, `ui`, `renderer`,

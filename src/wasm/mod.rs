@@ -33,6 +33,11 @@ use web_sys::{
 /// Transparent clear so the `<video>` underlay shows through in the player.
 const CLEAR: Color = Color::rgba(0, 0, 0, 0);
 
+/// EMA weight for perf HUD metrics (lower = steadier).
+const PERF_SMOOTH: f64 = 0.05;
+/// How often to rewrite the HUD DOM (ms).
+const HUD_REFRESH_MS: f64 = 250.0;
+
 struct App {
     renderer: WebGl2Renderer,
     video: JsPlayerSink,
@@ -40,37 +45,74 @@ struct App {
     layout: Layout,
     stack: Vec<Box<dyn Screen>>,
     last_ts: Option<f64>,
+    perf_hud: HtmlElement,
+    frame_ms_avg: f64,
+    work_ms_avg: f64,
+    hud_last_update_ts: f64,
 }
 
 impl App {
     fn tick(&mut self, ts: f64) {
-        let dt = match self.last_ts {
-            Some(prev) => (((ts - prev) / 1000.0) as f32).max(0.0),
+        let frame_ms = match self.last_ts {
+            Some(prev) => (ts - prev).max(0.0),
             None => 0.0,
         };
         self.last_ts = Some(ts);
 
-        // Split-borrow the fields so `Ctx` can hold the catalog/layout/video
-        // while the renderer is used independently.
-        let App {
-            renderer,
-            video,
-            catalog,
-            layout,
-            stack,
-            ..
-        } = self;
-        let mut ctx = Ctx {
-            catalog,
-            layout,
-            video,
+        let work_ms = {
+            let work_start = performance_now();
+
+            // Split-borrow the fields so `Ctx` can hold the catalog/layout/video
+            // while the renderer is used independently.
+            let App {
+                renderer,
+                video,
+                catalog,
+                layout,
+                stack,
+                ..
+            } = self;
+            let dt = (frame_ms / 1000.0) as f32;
+            let mut ctx = Ctx {
+                catalog,
+                layout,
+                video,
+            };
+            if let Some(top) = stack.last_mut() {
+                top.update(dt, &mut ctx);
+                renderer.begin_frame(CLEAR);
+                top.render(renderer, &mut ctx);
+                renderer.end_frame();
+            }
+
+            performance_now() - work_start
         };
-        if let Some(top) = stack.last_mut() {
-            top.update(dt, &mut ctx);
-            renderer.begin_frame(CLEAR);
-            top.render(renderer, &mut ctx);
-            renderer.end_frame();
+        self.update_perf_hud(ts, frame_ms, work_ms);
+    }
+
+    fn update_perf_hud(&mut self, ts: f64, frame_ms: f64, work_ms: f64) {
+        if frame_ms <= 0.0 {
+            return;
         }
+        if self.frame_ms_avg <= 0.0 {
+            self.frame_ms_avg = frame_ms;
+            self.work_ms_avg = work_ms;
+        } else {
+            self.frame_ms_avg += (frame_ms - self.frame_ms_avg) * PERF_SMOOTH;
+            self.work_ms_avg += (work_ms - self.work_ms_avg) * PERF_SMOOTH;
+        }
+
+        if ts - self.hud_last_update_ts < HUD_REFRESH_MS {
+            return;
+        }
+        self.hud_last_update_ts = ts;
+
+        let fps = 1000.0 / self.frame_ms_avg;
+        let text = format!(
+            "{:.0} FPS  |  frame {:.1} ms  |  work {:.1} ms",
+            fps, self.frame_ms_avg, self.work_ms_avg
+        );
+        self.perf_hud.set_text_content(Some(&text));
     }
 
     /// Handle a logical key. Returns `true` if the app should exit.
@@ -106,7 +148,7 @@ impl App {
     }
 }
 
-/// Boot the leanback UI. `player` is a JS PlayerAdapter that drives
+/// Boot the WASM TV UI. `player` is a JS PlayerAdapter that drives
 /// `#player-video` after this function creates the element.
 #[wasm_bindgen(js_name = setupApp)]
 pub fn setup_app(root: HtmlElement, player: JsPlayer) {
@@ -116,6 +158,7 @@ pub fn setup_app(root: HtmlElement, player: JsPlayer) {
         r#"<div class="stage">
   <video id="player-video" class="video-underlay" playsinline loop crossorigin="anonymous" style="display:none"></video>
   <canvas id="ui" class="ui-canvas"></canvas>
+  <div id="perf-hud" class="perf-hud" aria-hidden="true">— FPS</div>
 </div>"#,
     );
 
@@ -126,6 +169,7 @@ pub fn setup_app(root: HtmlElement, player: JsPlayer) {
 
     let images = ImageCache::new();
     let renderer = WebGl2Renderer::new(gl, DESIGN_WIDTH, DESIGN_HEIGHT, images);
+    let perf_hud = query_el::<HtmlElement>(&root, "#perf-hud");
 
     let app = Rc::new(RefCell::new(App {
         renderer,
@@ -134,6 +178,10 @@ pub fn setup_app(root: HtmlElement, player: JsPlayer) {
         layout: Layout::tv(),
         stack: vec![Box::new(BrowseScreen::new())],
         last_ts: None,
+        perf_hud,
+        frame_ms_avg: 0.0,
+        work_ms_avg: 0.0,
+        hud_last_update_ts: 0.0,
     }));
 
     install_keydown(app.clone());

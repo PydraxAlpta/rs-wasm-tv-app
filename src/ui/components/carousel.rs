@@ -14,6 +14,12 @@ use super::card;
 /// Time-constant (seconds) for carousel easing — small = snappy.
 pub const NAV_TAU: f32 = 0.11;
 
+/// Vertical rail scroll — slower than horizontal for a longer ease.
+pub const RAIL_TAU: f32 = 0.2;
+
+/// How many rails become available per lazy-load batch.
+pub const RAIL_BATCH: usize = 5;
+
 /// Vertical / zone hold-chain: start the next step this close to the target.
 pub const CHAIN_THRESHOLD: f32 = 0.4;
 
@@ -162,6 +168,15 @@ impl HCarousel {
     }
 }
 
+/// Whether card posters may upload new GPU textures this frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImageDraw {
+    /// Normal path — decode/upload on demand.
+    All,
+    /// Only textures already on the GPU (placeholders otherwise).
+    CachedOnly,
+}
+
 /// Draw a horizontal rail of cards inside `bounds`, sliding so column
 /// `anim_col` sits at `focus_x` (absolute design X).
 ///
@@ -174,6 +189,7 @@ pub fn draw_card_row(
     cards: &[Card],
     anim_col: f32,
     focus_x: f32,
+    images: ImageDraw,
 ) {
     let card_w = metrics.card_w;
     let card_h = metrics.card_h;
@@ -200,7 +216,10 @@ pub fn draw_card_row(
     for (ci, item) in cards.iter().enumerate() {
         if let Some(rect) = card_visible(ci) {
             let (x, y, w, h) = rect.as_i32();
-            r.draw_image(x, y, w, h, &item.image_url);
+            match images {
+                ImageDraw::All => r.draw_image(x, y, w, h, &item.image_url),
+                ImageDraw::CachedOnly => r.draw_image_cached(x, y, w, h, &item.image_url),
+            }
         }
     }
     for (ci, _) in cards.iter().enumerate() {

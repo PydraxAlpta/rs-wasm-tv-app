@@ -9,7 +9,9 @@ use crate::renderer::Renderer;
 use crate::screen::{Ctx, Key};
 use crate::theme;
 use super::card;
-use super::carousel::{self, HCarousel, CHAIN_THRESHOLD, HOLD_SCROLL_DELAY, NAV_TAU};
+use super::carousel::{
+    self, HCarousel, CHAIN_THRESHOLD, HOLD_SCROLL_DELAY, RAIL_BATCH, RAIL_TAU,
+};
 use super::widget::{Flex, FocusResult, Widget};
 
 pub struct RailList {
@@ -23,6 +25,8 @@ pub struct RailList {
     held_secs: f32,
     /// Extra top inset so rail 0 sits below the overlay banner while it is shown.
     banner_pad: f32,
+    /// How many catalog rails are currently available (lazy batches of [`RAIL_BATCH`]).
+    loaded_rails: usize,
     focused: bool,
     bounds: Rect,
     initialized: bool,
@@ -34,10 +38,11 @@ impl RailList {
             focus_rail: 0,
             focus_col: Vec::new(),
             rail_carousel: HCarousel::new(false),
-            anim_rail: Tween::new(0.0, NAV_TAU),
+            anim_rail: Tween::new(0.0, RAIL_TAU),
             held: None,
             held_secs: 0.0,
             banner_pad: 0.0,
+            loaded_rails: RAIL_BATCH,
             focused: true,
             bounds: Rect::new(0.0, 0.0, 0.0, 0.0),
             initialized: false,
@@ -62,6 +67,11 @@ impl RailList {
 
     pub fn focus_rail(&self) -> usize {
         self.focus_rail
+    }
+
+    /// How many catalog rails are currently revealed to navigation/render.
+    pub fn loaded_rails(&self) -> usize {
+        self.loaded_rails
     }
 
     pub fn anim_rail_settled(&self) -> bool {
@@ -94,7 +104,23 @@ impl RailList {
     fn ensure_init(&mut self, ctx: &Ctx) {
         if !self.initialized {
             self.focus_col = vec![0; ctx.catalog.rails.len()];
+            self.loaded_rails = RAIL_BATCH.min(ctx.catalog.rails.len());
             self.initialized = true;
+        }
+    }
+
+    fn visible_rail_count(&self, ctx: &Ctx) -> usize {
+        self.loaded_rails.min(ctx.catalog.rails.len())
+    }
+
+    /// Reveal the next batch when focus nears the end of what's loaded.
+    fn maybe_load_more(&mut self, ctx: &Ctx) {
+        let total = ctx.catalog.rails.len();
+        if self.loaded_rails >= total {
+            return;
+        }
+        if self.focus_rail + 2 >= self.loaded_rails {
+            self.loaded_rails = (self.loaded_rails + RAIL_BATCH).min(total);
         }
     }
 
@@ -108,8 +134,9 @@ impl RailList {
         }
         self.focus_rail = rail;
         self.anim_rail.set_target(rail as f32);
+        // Snap — do not ease from the previous rail's column into this one.
         let col = self.focus_col.get(rail).copied().unwrap_or(0);
-        self.rail_carousel.ease_to(col);
+        self.rail_carousel.snap(col);
     }
 
     fn chain_held(&mut self, dt: f32, ctx: &Ctx) {
@@ -117,7 +144,8 @@ impl RailList {
             return;
         };
         self.held_secs += dt;
-        let rails = &ctx.catalog.rails;
+        self.maybe_load_more(ctx);
+        let n = self.visible_rail_count(ctx);
         match held {
             Key::Up | Key::Down => {
                 if self.held_secs < HOLD_SCROLL_DELAY {
@@ -128,7 +156,7 @@ impl RailList {
                     return;
                 }
                 match held {
-                    Key::Down if self.focus_rail + 1 < rails.len() => {
+                    Key::Down if self.focus_rail + 1 < n => {
                         self.move_to_rail(self.focus_rail + 1);
                     }
                     Key::Up if self.focus_rail > 0 => {
@@ -141,7 +169,12 @@ impl RailList {
                 if self.held_secs < HOLD_SCROLL_DELAY {
                     return;
                 }
-                let count = rails.get(self.focus_rail).map(|r| r.cards.len()).unwrap_or(0);
+                let count = ctx
+                    .catalog
+                    .rails
+                    .get(self.focus_rail)
+                    .map(|r| r.cards.len())
+                    .unwrap_or(0);
                 let delta = if held == Key::Left { -1 } else { 1 };
                 self.rail_carousel.hold_advance(delta, count);
             }
@@ -153,8 +186,9 @@ impl RailList {
         let m = ctx.metrics;
         let anim = self.anim_rail.value();
         let focus_y = self.focus_card_y(ctx);
+        let n = self.visible_rail_count(ctx);
         let lo = (anim.floor() as i32 - 1).max(0) as usize;
-        let hi = ((anim.ceil() as i32 + 2) as usize).min(ctx.catalog.rails.len());
+        let hi = ((anim.ceil() as i32 + 2) as usize).min(n);
         for ri in lo..hi {
             let Some(rail) = ctx.catalog.rails.get(ri) else {
                 continue;
@@ -203,12 +237,14 @@ impl Widget for RailList {
 
     fn update(&mut self, dt: f32, ctx: &mut Ctx) {
         self.ensure_init(ctx);
+        self.maybe_load_more(ctx);
         self.anim_rail.step(dt);
         self.rail_carousel.update(dt);
         self.chain_held(dt, ctx);
     }
 
     fn render(&self, r: &mut dyn Renderer, ctx: &Ctx) {
+        // Decode in the background while scrolling; GPU upload waits until settle.
         self.prefetch_nearby(r, ctx);
 
         let m = ctx.metrics;
@@ -216,8 +252,17 @@ impl Widget for RailList {
         let focus_y = self.focus_card_y(ctx);
         let card_w = m.card_w;
         let card_h = m.card_h;
+        let images = if self.anim_rail.is_settled() {
+            carousel::ImageDraw::All
+        } else {
+            carousel::ImageDraw::CachedOnly
+        };
+        let n = self.visible_rail_count(ctx);
 
-        for (ri, rail) in ctx.catalog.rails.iter().enumerate() {
+        for ri in 0..n {
+            let Some(rail) = ctx.catalog.rails.get(ri) else {
+                break;
+            };
             let row_top = focus_y + (ri as f32 - anim_rail) * m.rail_step;
             let title_y = row_top - m.rail_title_h;
             if row_top + card_h < self.bounds.y || title_y > self.bounds.bottom() {
@@ -248,23 +293,39 @@ impl Widget for RailList {
             );
             // Focus slot stays at the content left edge; cull window includes
             // the safe margins so scrolled-off neighbors stay visible there.
-            carousel::draw_card_row(r, m, row_bounds, &rail.cards, col_off, self.bounds.x);
-        }
+            carousel::draw_card_row(
+                r,
+                m,
+                row_bounds,
+                &rail.cards,
+                col_off,
+                self.bounds.x,
+                images,
+            );
 
-        if self.focused {
-            let focus_rect = Rect::new(self.bounds.x, focus_y, card_w, card_h);
-            card::draw_focus_ring(r, focus_rect);
-            if let Some(rail) = ctx.catalog.rails.get(self.focus_rail) {
-                if let Some(item) = rail.cards.get(self.rail_carousel.index()) {
+            // Current card title rides with each rail (not pinned to the focus slot).
+            let col = if ri == self.focus_rail {
+                self.rail_carousel.index()
+            } else {
+                self.focus_col.get(ri).copied().unwrap_or(0)
+            };
+            if let Some(item) = rail.cards.get(col) {
+                let name_y = row_top + card_h + 14.0;
+                if name_y + 28.0 >= self.bounds.y && name_y <= self.bounds.bottom() {
                     r.draw_text(
                         self.bounds.x as i32,
-                        (focus_y + card_h + 14.0) as i32,
+                        name_y as i32,
                         28,
                         theme::TEXT,
                         &item.title,
                     );
                 }
             }
+        }
+
+        if self.focused {
+            let focus_rect = Rect::new(self.bounds.x, focus_y, card_w, card_h);
+            card::draw_focus_ring(r, focus_rect);
         }
     }
 
@@ -273,20 +334,21 @@ impl Widget for RailList {
             return FocusResult::Ignored;
         }
         self.ensure_init(ctx);
-        let rails = &ctx.catalog.rails;
-        if rails.is_empty() {
+        self.maybe_load_more(ctx);
+        let n = self.visible_rail_count(ctx);
+        if n == 0 {
             return FocusResult::Handled;
         }
         match key {
             Key::Left => {
-                let count = rails[self.focus_rail].cards.len();
+                let count = ctx.catalog.rails[self.focus_rail].cards.len();
                 self.rail_carousel.step(-1, count);
                 self.held = Some(Key::Left);
                 self.held_secs = 0.0;
                 FocusResult::Handled
             }
             Key::Right => {
-                let count = rails[self.focus_rail].cards.len();
+                let count = ctx.catalog.rails[self.focus_rail].cards.len();
                 self.rail_carousel.step(1, count);
                 self.held = Some(Key::Right);
                 self.held_secs = 0.0;
@@ -306,7 +368,7 @@ impl Widget for RailList {
                 }
             }
             Key::Down => {
-                if self.focus_rail + 1 < rails.len() {
+                if self.focus_rail + 1 < n {
                     self.move_to_rail(self.focus_rail + 1);
                     self.held = Some(Key::Down);
                     self.held_secs = 0.0;
@@ -451,6 +513,20 @@ mod tests {
             }
             assert_eq!(rails.focus().1, 1);
             assert!(rails.rail_carousel.is_settled());
+        });
+    }
+
+    #[test]
+    fn rails_load_in_batches_of_five() {
+        with_rails(|rails, ctx| {
+            rails.ensure_init(ctx);
+            assert_eq!(rails.loaded_rails(), RAIL_BATCH.min(ctx.catalog.rails.len()));
+            // Walk toward the end of the first batch — should reveal the next 5.
+            for _ in 0..4 {
+                rails.handle_key(Key::Down, ctx);
+            }
+            assert!(rails.loaded_rails() >= 10);
+            assert!(rails.loaded_rails() <= ctx.catalog.rails.len());
         });
     }
 }

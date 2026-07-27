@@ -89,8 +89,9 @@ pub struct Catalog {
 }
 
 impl Catalog {
-    /// Demo content: hero banners + 20 rails × 20 cards. Poster art from
-    /// picsum with fixed seeds so images stay stable across reloads.
+    /// Demo content: hero banners + 20 rails × 20 cards (UI lazy-reveals rails
+    /// in batches). Poster art from picsum with fixed seeds so images stay
+    /// stable across reloads.
     pub fn sample() -> Self {
         const BANNER_COUNT: usize = 5;
         const RAIL_COUNT: usize = 20;

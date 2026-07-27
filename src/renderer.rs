@@ -28,6 +28,14 @@ pub trait Renderer {
     /// Backends load/cache by URL asynchronously; until ready this may no-op.
     fn draw_image(&mut self, x: i32, y: i32, width: i32, height: i32, url: &str);
 
+    /// Draw an image only if it is already GPU-resident.
+    ///
+    /// Used during motion to avoid decode/upload hitching the frame. Default
+    /// falls back to [`Self::draw_image`].
+    fn draw_image_cached(&mut self, x: i32, y: i32, width: i32, height: i32, url: &str) {
+        self.draw_image(x, y, width, height, url);
+    }
+
     /// Kick off an async image load without drawing. Default no-op.
     fn prefetch_image(&mut self, _url: &str) {}
 

@@ -527,6 +527,18 @@ impl Renderer for WebGl2Renderer {
         self.draw_textured_quad(x, y, width, height, url);
     }
 
+    fn draw_image_cached(&mut self, x: i32, y: i32, width: i32, height: i32, url: &str) {
+        if width <= 0 || height <= 0 {
+            return;
+        }
+        // Skip decode/upload — only paint textures already on the GPU.
+        let Some(texture) = self.textures.get(url).cloned() else {
+            return;
+        };
+        self.flush_color_batches();
+        self.draw_texture_quad(x, y, width, height, &texture);
+    }
+
     fn prefetch_image(&mut self, url: &str) {
         ImageCache::request(&self.images, url);
     }

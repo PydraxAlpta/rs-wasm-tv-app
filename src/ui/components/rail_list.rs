@@ -1,7 +1,7 @@
 //! Leanback rail stack: fixed focus anchor, vertically sliding rows of cards.
 //!
-//! Hold Up/Down (or Left/Right) to chain the next step before the current tween
-//! settles; release to ease out to the current target.
+//! Hold Up/Down (or Left/Right) keeps a runway ahead of the tween (same as
+//! horizontal); release eases out forward, coasting past a too-close stop.
 
 use crate::anim::Tween;
 use crate::geom::Rect;
@@ -10,7 +10,8 @@ use crate::screen::{Ctx, Key};
 use crate::theme;
 use super::card;
 use super::carousel::{
-    self, HCarousel, CHAIN_THRESHOLD, HOLD_SCROLL_DELAY, RAIL_BATCH, RAIL_TAU,
+    self, HCarousel, CHAIN_THRESHOLD, HOLD_AHEAD, HOLD_SCROLL_DELAY, RAIL_BATCH, RAIL_TAU,
+    RELEASE_MIN_RUN,
 };
 use super::widget::{Flex, FocusResult, Widget};
 
@@ -139,6 +140,59 @@ impl RailList {
         self.rail_carousel.snap(col);
     }
 
+    /// While Up/Down is held, keep ~[`HOLD_AHEAD`] rails of runway ahead.
+    fn hold_advance_rail(&mut self, delta: i32, count: usize) {
+        if count == 0 || delta == 0 {
+            return;
+        }
+        let ahead = if delta > 0 {
+            self.anim_rail.target() - self.anim_rail.value()
+        } else {
+            self.anim_rail.value() - self.anim_rail.target()
+        };
+        if ahead < HOLD_AHEAD {
+            if delta > 0 && self.focus_rail + 1 < count {
+                self.move_to_rail(self.focus_rail + 1);
+            } else if delta < 0 && self.focus_rail > 0 {
+                self.move_to_rail(self.focus_rail - 1);
+            }
+        }
+    }
+
+    /// On key release after a continuous vertical hold: ease out forward,
+    /// coasting one more rail when the chosen stop would be too close.
+    fn release_ease_rail(&mut self, delta: i32, count: usize) {
+        if count == 0 {
+            return;
+        }
+        let v = self.anim_rail.value();
+        let mut target = if delta > 0 {
+            v.ceil()
+        } else if delta < 0 {
+            v.floor()
+        } else {
+            v.round()
+        };
+
+        if delta > 0 && target > v && (target - v) < RELEASE_MIN_RUN {
+            target += 1.0;
+        } else if delta < 0 && target < v && (v - target) < RELEASE_MIN_RUN {
+            target -= 1.0;
+        }
+
+        let last = (count.saturating_sub(1)) as f32;
+        target = target.clamp(0.0, last);
+        let rail = target as usize;
+
+        if let Some(slot) = self.focus_col.get_mut(self.focus_rail) {
+            *slot = self.rail_carousel.index();
+        }
+        self.focus_rail = rail;
+        self.anim_rail.set_target(target);
+        let col = self.focus_col.get(rail).copied().unwrap_or(0);
+        self.rail_carousel.snap(col);
+    }
+
     fn chain_held(&mut self, dt: f32, ctx: &Ctx) {
         let Some(held) = self.held else {
             return;
@@ -151,19 +205,8 @@ impl RailList {
                 if self.held_secs < HOLD_SCROLL_DELAY {
                     return;
                 }
-                let remaining = (self.anim_rail.target() - self.anim_rail.value()).abs();
-                if remaining >= CHAIN_THRESHOLD {
-                    return;
-                }
-                match held {
-                    Key::Down if self.focus_rail + 1 < n => {
-                        self.move_to_rail(self.focus_rail + 1);
-                    }
-                    Key::Up if self.focus_rail > 0 => {
-                        self.move_to_rail(self.focus_rail - 1);
-                    }
-                    _ => {}
-                }
+                let delta = if held == Key::Up { -1 } else { 1 };
+                self.hold_advance_rail(delta, n);
             }
             Key::Left | Key::Right => {
                 if self.held_secs < HOLD_SCROLL_DELAY {
@@ -392,15 +435,25 @@ impl Widget for RailList {
             return FocusResult::Ignored;
         }
         // Continuous hold: stitch a smooth stop. Tap: leave the single step target.
-        if matches!(key, Key::Left | Key::Right) && self.held_secs >= HOLD_SCROLL_DELAY {
-            let count = ctx
-                .catalog
-                .rails
-                .get(self.focus_rail)
-                .map(|r| r.cards.len())
-                .unwrap_or(0);
-            let delta = if key == Key::Left { -1 } else { 1 };
-            self.rail_carousel.release_ease(delta, count);
+        if self.held_secs >= HOLD_SCROLL_DELAY {
+            match key {
+                Key::Left | Key::Right => {
+                    let count = ctx
+                        .catalog
+                        .rails
+                        .get(self.focus_rail)
+                        .map(|r| r.cards.len())
+                        .unwrap_or(0);
+                    let delta = if key == Key::Left { -1 } else { 1 };
+                    self.rail_carousel.release_ease(delta, count);
+                }
+                Key::Up | Key::Down => {
+                    let n = self.visible_rail_count(ctx);
+                    let delta = if key == Key::Up { -1 } else { 1 };
+                    self.release_ease_rail(delta, n);
+                }
+                _ => {}
+            }
         }
         self.held = None;
         self.held_secs = 0.0;
@@ -455,7 +508,7 @@ mod tests {
         with_rails(|rails, ctx| {
             rails.handle_key(Key::Down, ctx);
             assert_eq!(rails.focus_rail(), 1);
-            // Past HOLD_SCROLL_DELAY, then chain while still held.
+            // Past HOLD_SCROLL_DELAY, then keep runway while still held.
             for _ in 0..30 {
                 rails.update(1.0 / 60.0, ctx);
             }
@@ -467,6 +520,24 @@ mod tests {
             }
             assert_eq!(rails.focus_rail(), at_release);
             assert!(rails.anim_rail_settled());
+        });
+    }
+
+    #[test]
+    fn hold_down_keeps_runway_ahead() {
+        with_rails(|rails, ctx| {
+            rails.handle_key(Key::Down, ctx);
+            for _ in 0..40 {
+                rails.update(1.0 / 60.0, ctx);
+                let ahead = rails.anim_rail.target() - rails.anim_rail.value();
+                let n = rails.visible_rail_count(ctx);
+                assert!(
+                    ahead > 0.15 || rails.focus_rail() + 1 >= n,
+                    "expected continuous runway, ahead={}",
+                    ahead
+                );
+            }
+            assert!(rails.focus_rail() > 1, "should have queued multiple rails while held");
         });
     }
 
@@ -496,6 +567,68 @@ mod tests {
             }
             assert_eq!(rails.focus_rail(), 1);
             assert!(rails.anim_rail_settled());
+        });
+    }
+
+    #[test]
+    fn vertical_release_ease_drops_far_target() {
+        with_rails(|rails, ctx| {
+            rails.ensure_init(ctx);
+            rails.move_to_rail(1);
+            rails.move_to_rail(2);
+            rails.move_to_rail(3);
+            rails.anim_rail.step(1.0 / 60.0);
+            let v = rails.anim_rail.value();
+            assert!(rails.anim_rail.target() > v + 1.0);
+            let n = rails.visible_rail_count(ctx);
+            rails.release_ease_rail(1, n);
+            assert!(rails.anim_rail.target() < v + 2.5);
+            assert!(rails.anim_rail.target() >= v.ceil() - 1e-3);
+            assert_eq!(rails.focus_rail(), rails.anim_rail.target() as usize);
+        });
+    }
+
+    #[test]
+    fn vertical_release_ease_coasts_when_too_close() {
+        with_rails(|rails, ctx| {
+            rails.ensure_init(ctx);
+            rails.anim_rail.snap(0.0);
+            rails.anim_rail.set_target(1.0);
+            rails.focus_rail = 1;
+            for _ in 0..200 {
+                rails.anim_rail.step(1.0 / 60.0);
+                let v = rails.anim_rail.value();
+                if (1.0 - v) < RELEASE_MIN_RUN && (1.0 - v) > 0.05 {
+                    break;
+                }
+            }
+            let v = rails.anim_rail.value();
+            assert!(1.0 - v < RELEASE_MIN_RUN, "precondition: tight remaining, v={}", v);
+            let n = rails.visible_rail_count(ctx);
+            rails.release_ease_rail(1, n);
+            assert!(
+                rails.focus_rail() >= 2,
+                "should coast to rail 2, got {}",
+                rails.focus_rail()
+            );
+        });
+    }
+
+    #[test]
+    fn vertical_release_ease_never_goes_backward() {
+        with_rails(|rails, ctx| {
+            rails.ensure_init(ctx);
+            rails.move_to_rail(1);
+            rails.anim_rail.step(1.0 / 60.0);
+            let v = rails.anim_rail.value();
+            let n = rails.visible_rail_count(ctx);
+            rails.release_ease_rail(1, n);
+            assert!(
+                rails.anim_rail.target() >= v.ceil() - 1e-3,
+                "must commit forward, v={} target={}",
+                v,
+                rails.anim_rail.target()
+            );
         });
     }
 

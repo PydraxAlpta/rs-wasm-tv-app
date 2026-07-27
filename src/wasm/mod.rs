@@ -147,6 +147,24 @@ impl App {
             Transition::None => false,
         }
     }
+
+    fn handle_key_up(&mut self, key: Key) {
+        let App {
+            video,
+            catalog,
+            metrics,
+            stack,
+            ..
+        } = self;
+        let mut ctx = Ctx {
+            catalog,
+            metrics,
+            video,
+        };
+        if let Some(top) = stack.last_mut() {
+            let _ = top.handle_key_up(key, &mut ctx);
+        }
+    }
 }
 
 /// Boot the WASM TV UI. `player` is a JS PlayerAdapter that drives
@@ -186,6 +204,7 @@ pub fn setup_app(root: HtmlElement, player: JsPlayer) {
     }));
 
     install_keydown(app.clone());
+    install_keyup(app.clone());
     start_animation_loop(app);
 }
 
@@ -235,6 +254,11 @@ fn install_keydown(app: Rc<RefCell<App>>) {
         let Some(key) = map_key(&event) else {
             return;
         };
+        // App-driven hold chaining for arrows; ignore OS auto-repeat.
+        if event.repeat() && matches!(key, Key::Up | Key::Down | Key::Left | Key::Right) {
+            event.prevent_default();
+            return;
+        }
         event.prevent_default();
         let should_exit = app.borrow_mut().handle_key(key);
         if should_exit {
@@ -247,6 +271,23 @@ fn install_keydown(app: Rc<RefCell<App>>) {
         .expect_throw("no document")
         .add_event_listener_with_callback("keydown", handler.as_ref().unchecked_ref())
         .expect_throw("failed to add keydown listener");
+    handler.forget();
+}
+
+fn install_keyup(app: Rc<RefCell<App>>) {
+    let handler = Closure::wrap(Box::new(move |event: KeyboardEvent| {
+        let Some(key) = map_key(&event) else {
+            return;
+        };
+        event.prevent_default();
+        app.borrow_mut().handle_key_up(key);
+    }) as Box<dyn FnMut(KeyboardEvent)>);
+
+    window()
+        .document()
+        .expect_throw("no document")
+        .add_event_listener_with_callback("keyup", handler.as_ref().unchecked_ref())
+        .expect_throw("failed to add keyup listener");
     handler.forget();
 }
 

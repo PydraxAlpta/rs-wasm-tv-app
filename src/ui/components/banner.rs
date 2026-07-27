@@ -7,19 +7,24 @@ use crate::renderer::Renderer;
 use crate::screen::{Ctx, Key};
 use crate::theme;
 use super::card;
-use super::carousel::{HCarousel, NAV_TAU};
+use super::carousel::{HCarousel, HOLD_SCROLL_DELAY, NAV_TAU};
 use super::widget::{Flex, FocusResult, Widget};
 
 const DOT_RADIUS: i32 = 7;
 const DOT_GAP: i32 = 22;
 
-/// Standalone hero strip. Height is controlled by the parent via layout bounds
-/// (collapse = parent assigns a shrinking height).
+/// Standalone hero strip drawn as an overlay (zero flex height).
+///
+/// Collapse is visual only via the reveal tween; parents keep rail layout stable
+/// and pass `full_height * reveal` as rail top padding.
 #[derive(Debug, Clone)]
 pub struct BannerCarousel {
     pages: HCarousel,
-    /// `1` = fully shown, `0` = collapsed (drives preferred flex height).
+    /// `1` = fully shown, `0` = collapsed.
     reveal: Tween,
+    /// Held Left/Right for app-driven chaining (OS key-repeat is ignored).
+    held: Option<Key>,
+    held_secs: f32,
     focused: bool,
     bounds: Rect,
     full_height: f32,
@@ -30,6 +35,8 @@ impl BannerCarousel {
         Self {
             pages: HCarousel::new(true),
             reveal: Tween::new(1.0, NAV_TAU),
+            held: None,
+            held_secs: 0.0,
             focused: false,
             bounds: Rect::new(0.0, 0.0, 0.0, 0.0),
             full_height,
@@ -46,6 +53,10 @@ impl BannerCarousel {
 
     pub fn set_focused(&mut self, focused: bool) {
         self.focused = focused;
+        if !focused {
+            self.held = None;
+            self.held_secs = 0.0;
+        }
     }
 
     pub fn reveal_value(&self) -> f32 {
@@ -60,6 +71,8 @@ impl BannerCarousel {
         self.reveal.set_target(if shown { 1.0 } else { 0.0 });
         if !shown {
             self.focused = false;
+            self.held = None;
+            self.held_secs = 0.0;
         }
     }
 
@@ -69,6 +82,27 @@ impl BannerCarousel {
 
     pub fn step(&mut self, delta: i32, page_count: usize) {
         self.pages.step(delta, page_count);
+    }
+
+    /// Place the overlay at `origin` with height `full_height * reveal`.
+    pub fn layout_overlay(&mut self, origin: Rect) {
+        let h = self.full_height * self.reveal.value();
+        self.bounds = Rect::new(origin.x, origin.y, origin.w, h);
+    }
+
+    fn chain_held(&mut self, dt: f32, page_count: usize) {
+        let Some(held) = self.held else {
+            return;
+        };
+        self.held_secs += dt;
+        if !matches!(held, Key::Left | Key::Right) || page_count == 0 {
+            return;
+        }
+        if self.held_secs < HOLD_SCROLL_DELAY {
+            return;
+        }
+        let delta = if held == Key::Left { -1 } else { 1 };
+        self.pages.hold_advance(delta, page_count);
     }
 
     fn paint(&self, r: &mut dyn Renderer, slides: &[BannerSlide]) {
@@ -129,7 +163,8 @@ impl BannerCarousel {
 
 impl Widget for BannerCarousel {
     fn flex(&self) -> Flex {
-        Flex::Fixed(self.full_height * self.reveal.value())
+        // Overlay: does not push rails down via flex reflow.
+        Flex::Fixed(0.0)
     }
 
     fn layout(&mut self, bounds: Rect) {
@@ -138,7 +173,9 @@ impl Widget for BannerCarousel {
 
     fn update(&mut self, dt: f32, ctx: &mut Ctx) {
         self.pages.update(dt);
-        self.pages.normalize(ctx.catalog.banners.len());
+        let n = ctx.catalog.banners.len();
+        self.chain_held(dt, n);
+        self.pages.normalize(n);
         self.reveal.step(dt);
     }
 
@@ -154,20 +191,107 @@ impl Widget for BannerCarousel {
         match key {
             Key::Left => {
                 self.step(-1, n);
+                self.held = Some(Key::Left);
+                self.held_secs = 0.0;
                 FocusResult::Handled
             }
             Key::Right => {
                 self.step(1, n);
+                self.held = Some(Key::Right);
+                self.held_secs = 0.0;
                 FocusResult::Handled
             }
-            Key::Down => FocusResult::MoveOut(Key::Down),
-            Key::Up => FocusResult::MoveOut(Key::Up),
-            Key::Enter => FocusResult::Activate,
+            Key::Down => {
+                self.held = None;
+                self.held_secs = 0.0;
+                FocusResult::MoveOut(Key::Down)
+            }
+            Key::Up => {
+                self.held = None;
+                self.held_secs = 0.0;
+                FocusResult::MoveOut(Key::Up)
+            }
+            Key::Enter => {
+                self.held = None;
+                self.held_secs = 0.0;
+                FocusResult::Activate
+            }
             Key::Back => FocusResult::Ignored,
         }
     }
 
+    fn handle_key_up(&mut self, key: Key, ctx: &mut Ctx) -> FocusResult {
+        if self.held != Some(key) {
+            return FocusResult::Ignored;
+        }
+        if matches!(key, Key::Left | Key::Right) && self.held_secs >= HOLD_SCROLL_DELAY {
+            let n = ctx.catalog.banners.len();
+            let delta = if key == Key::Left { -1 } else { 1 };
+            self.pages.release_ease(delta, n);
+        }
+        self.held = None;
+        self.held_secs = 0.0;
+        FocusResult::Handled
+    }
+
     fn bounds(&self) -> Rect {
         self.bounds
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::metrics::Metrics;
+    use crate::model::Catalog;
+    use crate::screen::VideoSink;
+
+    struct NullSink;
+    impl VideoSink for NullSink {
+        fn load_and_play(&mut self, _url: &str) {}
+        fn play(&mut self) {}
+        fn pause(&mut self) {}
+        fn is_paused(&self) -> bool {
+            true
+        }
+        fn current_time(&self) -> f64 {
+            0.0
+        }
+        fn duration(&self) -> f64 {
+            0.0
+        }
+        fn seek(&mut self, _t: f64) {}
+        fn set_visible(&mut self, _v: bool) {}
+    }
+
+    #[test]
+    fn hold_right_chains_before_settle() {
+        let cat = Catalog::sample();
+        let metrics = Metrics::tv();
+        let mut video = NullSink;
+        let mut ctx = Ctx {
+            catalog: &cat,
+            metrics: &metrics,
+            video: &mut video,
+        };
+        let mut banner = BannerCarousel::new(420.0);
+        banner.set_focused(true);
+        let start = banner.index();
+        banner.handle_key(Key::Right, &mut ctx);
+        // Past HOLD_SCROLL_DELAY so continuous scroll engages.
+        for _ in 0..30 {
+            banner.update(1.0 / 60.0, &mut ctx);
+        }
+        assert_ne!(
+            banner.index(),
+            start,
+            "should have advanced while held"
+        );
+        banner.handle_key_up(Key::Right, &mut ctx);
+        for _ in 0..120 {
+            banner.update(1.0 / 60.0, &mut ctx);
+        }
+        assert!(banner.pages.is_settled());
+        assert_ne!(banner.index(), start);
     }
 }

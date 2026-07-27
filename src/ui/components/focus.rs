@@ -61,6 +61,20 @@ impl FocusScope {
             other => other,
         }
     }
+
+    /// Route a key release into the focused child (no focus walking).
+    pub fn handle_key_up(
+        &mut self,
+        key: Key,
+        ctx: &mut Ctx,
+        children: &mut [&mut dyn Widget],
+    ) -> FocusResult {
+        if children.is_empty() {
+            return FocusResult::Ignored;
+        }
+        self.focused = self.focused.min(children.len() - 1);
+        children[self.focused].handle_key_up(key, ctx)
+    }
 }
 
 /// Map a focus index used by browse (0 = banner, 1 = rails) to [`FocusZone`].

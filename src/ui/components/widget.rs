@@ -49,6 +49,11 @@ pub trait Widget {
         FocusResult::Ignored
     }
 
+    /// Key release. Default ignores; hold-to-scroll widgets clear held direction here.
+    fn handle_key_up(&mut self, _key: Key, _ctx: &mut Ctx) -> FocusResult {
+        FocusResult::Ignored
+    }
+
     fn bounds(&self) -> Rect;
 }
 

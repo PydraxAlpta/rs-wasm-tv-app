@@ -6,9 +6,21 @@ use crate::theme;
 
 /// Draw a poster tile: placeholder, image, border.
 pub fn draw_card(r: &mut dyn Renderer, rect: Rect, image_url: &str) {
+    draw_card_bg(r, rect);
+    let (x, y, w, h) = rect.as_i32();
+    r.draw_image(x, y, w, h, image_url);
+    draw_card_border(r, rect);
+}
+
+/// Placeholder fill only (for batched row draws).
+pub fn draw_card_bg(r: &mut dyn Renderer, rect: Rect) {
     let (x, y, w, h) = rect.as_i32();
     r.fill_rect(x, y, w, h, theme::CARD_BG);
-    r.draw_image(x, y, w, h, image_url);
+}
+
+/// Border only (for batched row draws).
+pub fn draw_card_border(r: &mut dyn Renderer, rect: Rect) {
+    let (x, y, w, h) = rect.as_i32();
     r.stroke_rect(x, y, w, h, theme::CARD_BORDER);
 }
 

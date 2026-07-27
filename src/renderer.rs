@@ -28,6 +28,9 @@ pub trait Renderer {
     /// Backends load/cache by URL asynchronously; until ready this may no-op.
     fn draw_image(&mut self, x: i32, y: i32, width: i32, height: i32, url: &str);
 
+    /// Kick off an async image load without drawing. Default no-op.
+    fn prefetch_image(&mut self, _url: &str) {}
+
     /// Draw text with top-left at `(x, y)`. `size` is font size in CSS pixels
     /// (glyph height), rendered with a system sans-serif font.
     fn draw_text(&mut self, x: i32, y: i32, size: i32, color: Color, text: &str);

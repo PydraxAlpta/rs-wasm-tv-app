@@ -117,6 +117,17 @@ impl Screen for MainShell {
                 }
             }
         }
+
+        // Hold-Up from content (banner dwell) → nav.
+        if self.focus == ShellFocus::Content {
+            let selected = self.nav.selected().index();
+            if let Some(page) = self.pages[selected].as_mut() {
+                if matches!(page.take_pending_move_out(), Some(Key::Up)) {
+                    self.focus = ShellFocus::Nav;
+                }
+            }
+        }
+
         self.sync_focus_flags();
     }
 
@@ -145,6 +156,8 @@ impl Screen for MainShell {
                     self.ensure_page(after);
                     if let Some(page) = self.active_page_mut() {
                         page.focus_top(ctx);
+                        // Hold-Down continues banner → rails after a short dwell.
+                        page.begin_hold_traverse(Key::Down);
                     }
                 }
                 self.sync_focus_flags();
@@ -180,6 +193,27 @@ impl Screen for MainShell {
                 }
             }
         }
+    }
+
+    fn handle_key_up(&mut self, key: Key, ctx: &mut Ctx) -> Transition {
+        if let Some(page) = self.active_page_mut() {
+            if page.overlay_active() {
+                let _ = page.handle_key_up(key, ctx);
+                return Transition::None;
+            }
+        }
+        match self.focus {
+            ShellFocus::Nav => {
+                let _ = self.nav.handle_key_up(key, ctx);
+            }
+            ShellFocus::Content => {
+                self.ensure_page(self.nav.selected());
+                if let Some(page) = self.active_page_mut() {
+                    let _ = page.handle_key_up(key, ctx);
+                }
+            }
+        }
+        Transition::None
     }
 
     fn render(&mut self, r: &mut dyn Renderer, ctx: &mut Ctx) {
@@ -288,6 +322,37 @@ mod tests {
             s.handle_key(Key::Down, ctx);
         });
         assert!(!s.nav_focused());
+    }
+
+    #[test]
+    fn hold_up_from_content_reaches_nav() {
+        let s = with_shell(|s, ctx| {
+            s.handle_key(Key::Down, ctx); // banner → rails
+            s.handle_key(Key::Down, ctx); // rail 1
+            s.handle_key(Key::Up, ctx);
+            for _ in 0..150 {
+                s.update(1.0 / 60.0, ctx);
+            }
+        });
+        assert!(s.nav_focused(), "hold Up should walk rails → banner → nav");
+    }
+
+    #[test]
+    fn hold_down_from_nav_reaches_rails() {
+        let s = with_shell(|s, ctx| {
+            s.handle_key(Key::Up, ctx);
+            assert!(s.nav_focused());
+            s.handle_key(Key::Down, ctx); // nav → banner + hold traverse
+            for _ in 0..90 {
+                s.update(1.0 / 60.0, ctx);
+            }
+        });
+        assert!(!s.nav_focused());
+        let page = s.pages[0].as_ref().unwrap();
+        assert!(
+            !page.banner_focused(),
+            "hold Down from nav should continue into rails"
+        );
     }
 
     #[test]

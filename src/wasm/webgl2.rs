@@ -527,6 +527,10 @@ impl Renderer for WebGl2Renderer {
         self.draw_textured_quad(x, y, width, height, url);
     }
 
+    fn prefetch_image(&mut self, url: &str) {
+        ImageCache::request(&self.images, url);
+    }
+
     fn draw_text(&mut self, x: i32, y: i32, size: i32, color: Color, text: &str) {
         if size <= 0 || text.is_empty() {
             return;

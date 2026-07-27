@@ -51,4 +51,9 @@ pub trait Screen {
     fn update(&mut self, dt: f32, ctx: &mut Ctx);
     fn render(&mut self, r: &mut dyn Renderer, ctx: &mut Ctx);
     fn handle_key(&mut self, key: Key, ctx: &mut Ctx) -> Transition;
+
+    /// Key release. Default ignores; directional hold-to-scroll clears here.
+    fn handle_key_up(&mut self, _key: Key, _ctx: &mut Ctx) -> Transition {
+        Transition::None
+    }
 }

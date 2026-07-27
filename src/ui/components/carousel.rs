@@ -14,6 +14,21 @@ use super::card;
 /// Time-constant (seconds) for carousel easing — small = snappy.
 pub const NAV_TAU: f32 = 0.11;
 
+/// Vertical / zone hold-chain: start the next step this close to the target.
+pub const CHAIN_THRESHOLD: f32 = 0.4;
+
+/// Horizontal hold: keep at least this much runway (index units) ahead of
+/// `current` so the exponential tween never settles between cards.
+pub const HOLD_AHEAD: f32 = 1.0;
+
+/// On release after a continuous hold: if the chosen stop is closer than this,
+/// coast one more card so the ease-out has room to feel smooth.
+pub const RELEASE_MIN_RUN: f32 = 0.4;
+
+/// Seconds a Left/Right key must be held before continuous scroll starts.
+/// Shorter presses are a single-card tap.
+pub const HOLD_SCROLL_DELAY: f32 = 0.2;
+
 /// Horizontal index + animated fractional offset.
 #[derive(Debug, Clone)]
 pub struct HCarousel {
@@ -56,6 +71,12 @@ impl HCarousel {
         self.anim.snap(index as f32);
     }
 
+    /// Ease toward `index` without snapping (used when switching rails).
+    pub fn ease_to(&mut self, index: usize) {
+        self.index = index;
+        self.anim.set_target(index as f32);
+    }
+
     pub fn step(&mut self, delta: i32, count: usize) {
         if count == 0 || delta == 0 {
             return;
@@ -75,6 +96,59 @@ impl HCarousel {
         }
     }
 
+    /// While a direction is held, keep the tween target far enough ahead that
+    /// motion stays continuous instead of settling per card.
+    pub fn hold_advance(&mut self, delta: i32, count: usize) {
+        if count == 0 || delta == 0 {
+            return;
+        }
+        let ahead = if delta > 0 {
+            self.anim.target() - self.anim.value()
+        } else {
+            self.anim.value() - self.anim.target()
+        };
+        if ahead < HOLD_AHEAD {
+            self.step(delta, count);
+        }
+    }
+
+    /// On key release: ease out forward in the travel direction.
+    ///
+    /// Always commits to the next card ahead (never eases backward). If that
+    /// stop would be too close for a smooth ease, coast one more card.
+    pub fn release_ease(&mut self, delta: i32, count: usize) {
+        if count == 0 {
+            return;
+        }
+        let v = self.anim.value();
+        let mut target = if delta > 0 {
+            v.ceil()
+        } else if delta < 0 {
+            v.floor()
+        } else {
+            v.round()
+        };
+
+        // Already on an integer: stay there (ceil/floor of 3.0 is 3.0).
+        // Too close for a smooth stop — keep going one more card.
+        if delta > 0 && target > v && (target - v) < RELEASE_MIN_RUN {
+            target += 1.0;
+        } else if delta < 0 && target < v && (v - target) < RELEASE_MIN_RUN {
+            target -= 1.0;
+        }
+
+        if self.wrap {
+            let n = count as f32;
+            self.anim.set_target(target);
+            self.index = target.rem_euclid(n) as usize;
+        } else {
+            let last = (count.saturating_sub(1)) as f32;
+            target = target.clamp(0.0, last);
+            self.anim.set_target(target);
+            self.index = target as usize;
+        }
+    }
+
     pub fn normalize(&mut self, count: usize) {
         if !self.wrap || count == 0 || !self.anim.is_settled() {
             return;
@@ -90,6 +164,9 @@ impl HCarousel {
 
 /// Draw a horizontal rail of cards inside `bounds`, sliding so column
 /// `anim_col` sits at `focus_x` (absolute design X).
+///
+/// Three passes (fills → images → borders) so color batches flush once
+/// before textured quads instead of once per card.
 pub fn draw_card_row(
     r: &mut dyn Renderer,
     metrics: &Metrics,
@@ -103,20 +180,33 @@ pub fn draw_card_row(
     let step = metrics.card_step();
     let row_y = bounds.y;
 
-    if row_y + card_h < bounds.y || row_y > bounds.bottom() {
-        // still draw if overlapping bounds
-    }
-
-    for (ci, item) in cards.iter().enumerate() {
+    let card_visible = |ci: usize| -> Option<Rect> {
         let x = focus_x + (ci as f32 - anim_col) * step;
         let card_rect = Rect::new(x, row_y, card_w, card_h);
         if card_rect.right() < bounds.x || card_rect.x > bounds.right() {
-            continue;
+            return None;
         }
         if card_rect.bottom() < bounds.y || card_rect.y > bounds.bottom() {
-            continue;
+            return None;
         }
-        card::draw_card(r, card_rect, &item.image_url);
+        Some(card_rect)
+    };
+
+    for (ci, _) in cards.iter().enumerate() {
+        if let Some(rect) = card_visible(ci) {
+            card::draw_card_bg(r, rect);
+        }
+    }
+    for (ci, item) in cards.iter().enumerate() {
+        if let Some(rect) = card_visible(ci) {
+            let (x, y, w, h) = rect.as_i32();
+            r.draw_image(x, y, w, h, &item.image_url);
+        }
+    }
+    for (ci, _) in cards.iter().enumerate() {
+        if let Some(rect) = card_visible(ci) {
+            card::draw_card_border(r, rect);
+        }
     }
 }
 
@@ -172,5 +262,76 @@ mod tests {
         }
         assert!(c.is_settled());
         assert!((c.anim_value() - 0.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn hold_advance_keeps_runway_ahead() {
+        let mut c = HCarousel::new(false);
+        c.step(1, 20);
+        // Mimic a held Right: never let the tween settle between cards.
+        for _ in 0..30 {
+            c.update(1.0 / 60.0);
+            c.hold_advance(1, 20);
+            let ahead = c.target() - c.anim_value();
+            assert!(
+                ahead > 0.15 || c.index() >= 19,
+                "expected continuous runway, ahead={}",
+                ahead
+            );
+        }
+        assert!(c.target() > 2.0, "should have queued multiple cards while held");
+    }
+
+    #[test]
+    fn release_ease_drops_far_target() {
+        let mut c = HCarousel::new(false);
+        c.step(1, 20);
+        c.step(1, 20);
+        c.step(1, 20);
+        c.update(1.0 / 60.0);
+        let v = c.anim_value();
+        assert!(c.target() > v + 1.0);
+        c.release_ease(1, 20);
+        // Should not keep the far queued target.
+        assert!(c.target() < v + 2.5);
+        assert!(c.target() >= v.ceil() - 1e-3);
+    }
+
+    #[test]
+    fn release_ease_coasts_when_too_close_to_stop() {
+        let mut c = HCarousel::new(false);
+        c.snap(0);
+        c.ease_to(1);
+        // Advance until within MIN_RUN of target 1.
+        for _ in 0..200 {
+            c.update(1.0 / 60.0);
+            let v = c.anim_value();
+            if (1.0 - v) < RELEASE_MIN_RUN && (1.0 - v) > 0.05 {
+                break;
+            }
+        }
+        let v = c.anim_value();
+        assert!(1.0 - v < RELEASE_MIN_RUN, "precondition: tight remaining, v={}", v);
+        c.release_ease(1, 20);
+        assert!(
+            c.target() >= 2.0 - 1e-3,
+            "should coast to card 2, got target {}",
+            c.target()
+        );
+    }
+
+    #[test]
+    fn release_ease_never_goes_backward() {
+        let mut c = HCarousel::new(false);
+        c.step(1, 20);
+        c.update(1.0 / 60.0);
+        let v = c.anim_value();
+        c.release_ease(1, 20);
+        assert!(
+            c.target() >= v.ceil() - 1e-3,
+            "must commit forward, v={} target={}",
+            v,
+            c.target()
+        );
     }
 }

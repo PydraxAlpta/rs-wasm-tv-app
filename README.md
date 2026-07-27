@@ -1,8 +1,10 @@
 # rs-wasm-leanback
 
-A retained-mode **TV/leanback UI** — Netflix-style carousels ("rails" of cards) plus a video player — written in Rust, compiled to WebAssembly, and rendered entirely with **WebGL2** via raw `web-sys`. Remote/d-pad keys drive a fixed-focus spatial navigation model. A Vite + TypeScript app in `www/` hosts the wasm module, and `tizen/config.xml` targets Samsung Tizen TVs at 1920×1080.
+A retained-mode **TV/leanback UI** — top nav + a hero banner + Netflix-style carousels ("rails" of cards) + a metadata overlay + a video player — written in Rust, compiled to WebAssembly, and rendered entirely with **WebGL2** via raw `web-sys`. Remote/d-pad keys drive a fixed-focus spatial navigation model. A Vite + TypeScript app in `www/` hosts the wasm module and owns `<video>` playback, and `tizen/config.xml` targets Samsung Tizen TVs at 1920×1080.
 
-The core (`model`, `layout`, `anim`, `screen`, `ui`, `renderer`, `theme`, `buffer`) is platform-agnostic Rust and unit-testable off-wasm; only `wasm/` and `utils.rs` are `#[cfg(target_arch = "wasm32")]` browser glue.
+The core (`model`, `geom`, `metrics`, `anim`, `screen`, `ui`, `renderer`, `theme`, `buffer`) is platform-agnostic Rust and unit-testable off-wasm; only `wasm/` and `utils.rs` are `#[cfg(target_arch = "wasm32")]` browser glue.
+
+In-depth design docs live in [`doc/`](doc/): [architecture](doc/ARCHITECTURE.md), [navigation](doc/NAVIGATION.md), [rendering](doc/RENDERING.md). (The plural `docs/` directory is the generated GitHub Pages build output.)
 
 ## Prerequisites
 
@@ -47,23 +49,32 @@ Three traits decouple the layers:
 
 - **`Renderer`** (`src/renderer.rs`) — pluggable draw backend of primitives; UI never touches GL directly. Implemented by `WebGl2Renderer` (`src/wasm/webgl2.rs`).
 - **`Screen` + `Transition`** (`src/screen.rs`) — a screen-stack router; the app renders only the top screen and screens navigate by returning `Push`/`Pop`.
-- **`VideoSink`** (`src/screen.rs`) — abstracts `<video>` playback so screens hold no `web-sys`.
+- **`VideoSink`** (`src/screen.rs`) — abstracts `<video>` playback so screens hold no `web-sys`; on wasm it forwards to a JS `PlayerAdapter`.
 
-The leanback navigation is a fixed focus-anchor / moving-content model: the focus ring stays at a fixed screen position while the content grid slides behind it, with animated fractional indices smoothed by `Tween` (`src/anim.rs`). All browse-page geometry lives in `Layout::tv()` (`src/layout.rs`).
+The UI is a retained-mode **widget tree** (`src/ui/components/` + `src/ui/pages/`) with a
+`Flex` layout system. The leanback navigation is a fixed focus-anchor / moving-content
+model: the focus ring stays at a fixed screen position while the content grid slides behind
+it, with animated fractional indices smoothed by `Tween` (`src/anim.rs`). Card/spacing
+geometry lives in `Metrics::tv()` (`src/metrics.rs`). See [`doc/`](doc/) for the full write-up.
 
 ## Layout
 
 | Path | Role |
 |------|------|
-| `src/model.rs` | Content model (`Card` / `Rail` / `Catalog`); add content here |
-| `src/layout.rs` | All browse-page geometry in the 1920×1080 design space |
+| `src/model.rs` | Content model (`Card` / `Rail` / `BannerSlide` / `Catalog`); add content here |
+| `src/geom.rs` | Pure geometry: `Rect` / `Size` / `Insets` |
+| `src/metrics.rs` | Card sizes, spacing, band heights (`Metrics::tv()`; `Layout` is an alias) |
+| `src/anim.rs` | `Tween` — frame-rate-independent exponential smoothing |
 | `src/screen.rs` | Navigation core: `Screen`, `Transition`, `VideoSink`, `Ctx`, `Key` |
 | `src/renderer.rs` | The `Renderer` draw-primitive trait |
-| `src/ui/` | Concrete screens (`browse`, `player`) |
+| `src/ui/components/` | Reusable widgets: nav bar, banner, carousel, rail list, overlay, containers, focus |
+| `src/ui/pages/` | Full-screen views: `MainShell`, `CatalogPage`, `PlayerScreen` |
 | `src/wasm/` | Browser glue: `setupApp` entry, rAF loop, WebGL2 renderer, image cache, video sink |
 | `pkg/` | wasm-pack output (gitignored; created on build) |
-| `www/` | Vite + TypeScript host app (imports the crate by name) |
+| `www/` | Vite + TypeScript host app (imports the crate by name; owns the `<video>` player) |
 | `tizen/config.xml` | Samsung Tizen TV app manifest |
-| `mise.toml` | `dev` / `build` / `preview` tasks |
+| `mise.toml` | `dev` / `build` / `preview` / `docs` tasks |
 
-Extending: add content in `model.rs`, add a view by implementing `Screen` in `src/ui/`, add a draw backend by implementing `Renderer` — these are independent and shouldn't touch each other.
+Extending: add content in `model.rs`, add a reusable widget in `src/ui/components/`, add a
+view by implementing `Screen` in `src/ui/pages/`, add a draw backend by implementing
+`Renderer` — these are independent and shouldn't touch each other.

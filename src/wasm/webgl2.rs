@@ -19,7 +19,9 @@ use web_sys::{
 const CIRCLE_SEGMENTS: i32 = 64;
 const FLOATS_PER_VERT: usize = 6;
 const FLOATS_PER_TEX_VERT: usize = 4; // x, y, u, v
-/// Match [`super::image_cache`] — visible rails + neighbors without thrashing.
+/// GPU texture (VRAM) budget: visible rails + prefetch window, no placeholder
+/// flashes during motion. Kept smaller than the decoded-image cache
+/// (`super::image_cache::IMAGE_CACHE_CAP`) — VRAM is the scarce resource on a TV.
 const IMAGE_TEX_CAP: usize = 96;
 /// Titles / metadata strings churn as focus moves; keep a larger text budget.
 const TEXT_TEX_CAP: usize = 192;
@@ -286,6 +288,9 @@ impl WebGl2Renderer {
     fn draw_textured_quad(&mut self, x: i32, y: i32, w: i32, h: i32, url: &str) {
         // Prefer an existing GL texture even if the HTML image was LRU-evicted.
         if let Some(texture) = self.textures.get(url).cloned() {
+            // Keep the decoded source warm so it outlives its texture (re-upload
+            // without a refetch). Promote-if-present — never starts a load.
+            ImageCache::touch(&self.images, url);
             self.draw_texture_quad(x, y, w, h, &texture);
             return;
         }
@@ -535,6 +540,8 @@ impl Renderer for WebGl2Renderer {
         let Some(texture) = self.textures.get(url).cloned() else {
             return;
         };
+        // Keep the decoded source warm even while drawing cached-only during motion.
+        ImageCache::touch(&self.images, url);
         self.flush_color_batches();
         self.draw_texture_quad(x, y, width, height, &texture);
     }

@@ -9,8 +9,11 @@ use wasm_bindgen::closure::Closure;
 use wasm_bindgen::JsCast;
 use web_sys::HtmlImageElement;
 
-/// Enough for a few on-screen rails plus neighbors without thrashing.
-const IMAGE_CACHE_CAP: usize = 96;
+/// Decoded-image (system memory) budget. Kept larger than the GPU texture cap
+/// (`webgl2::IMAGE_TEX_CAP`) on purpose: RAM is cheap relative to VRAM, so we
+/// retain sources for several rails above/below the viewport. When a GPU texture
+/// is evicted, its `<img>` is likely still here, so re-upload skips a refetch.
+const IMAGE_CACHE_CAP: usize = 192;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Status {
@@ -106,6 +109,16 @@ impl ImageCache {
         element.set_src(url);
         on_load.forget();
         on_error.forget();
+    }
+
+    /// Promote `url` to most-recently-used **if it is already cached**, without
+    /// starting a load. Called when a URL is drawn from its GPU texture so the
+    /// decoded-image LRU tracks actual on-screen usage instead of drifting toward
+    /// eviction while its texture stays hot (see the double-cache note in
+    /// `doc/RENDERING.md`). `get` promotes when present and is a no-op when absent,
+    /// so this never triggers a fetch.
+    pub fn touch(this: &ImageCacheHandle, url: &str) {
+        let _ = this.borrow_mut().entries.get(url);
     }
 
     /// The decoded element, once ready; kicks off a load on first request.

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-`rs-wasm-leanback` is a retained-mode **TV/leanback UI** (Netflix-style nav + hero banner + carousels + metadata overlay + video player) written in Rust, compiled to WebAssembly, and rendered entirely with **WebGL2 via raw `web-sys`**. Remote/d-pad keys drive a fixed-focus spatial navigation model. A Vite + TypeScript app in `www/` hosts the wasm module and owns `<video>` playback; `tizen/config.xml` targets Samsung Tizen TVs (1920×1080).
+`rs-wasm-tv-app` is a retained-mode **TV/leanback UI** (Netflix-style nav + hero banner + carousels + metadata overlay + video player) written in Rust, compiled to WebAssembly, and rendered entirely with **WebGL2 via raw `web-sys`**. Remote/d-pad keys drive a fixed-focus spatial navigation model. A Vite + TypeScript app in `www/` hosts the wasm module and owns `<video>` playback; `tizen/config.xml` targets Samsung Tizen TVs (1920×1080).
 
 This project was generated from a `rust-wasm-vite` cargo-generate template (a counter starter); the scaffolding (`www/` wiring, `mise.toml`, wasm glue pattern) comes from there, but the app itself is now the leanback UI described here.
 
@@ -98,7 +98,7 @@ Per the module doc comments, these are independent: add content in `src/model.rs
 
 ## wasm ↔ JS wiring
 
-`www/src/main.ts` imports `setupApp` from the package name `rs-wasm-leanback` and calls it with the `#app` root and a `PlayerAdapter` from `createHtml5Player()` (`www/src/player.ts`), which drives the Rust-created `#player-video` element. `www/vite.config.ts` aliases that package name to `../pkg` (the wasm-pack output, gitignored), uses `vite-plugin-wasm`, sets `base: "./"` (required for Tizen relative loading), and adds a `watch-pkg` plugin so Vite reloads on wasm rebuild — so no `pnpm i` is needed after each rebuild. `www/src/style.css` centres a letterboxed 16:9 stage; the canvas backing store is 1920×1080 and CSS-scaled to fit.
+`www/src/main.ts` imports `setupApp` from the package name `rs-wasm-tv-app` and calls it with the `#app` root and a `PlayerAdapter` from `createHtml5Player()` (`www/src/player.ts`), which drives the Rust-created `#player-video` element. `www/vite.config.ts` aliases that package name to `../pkg` (the wasm-pack output, gitignored), uses `vite-plugin-wasm`, sets `base: "./"` (required for Tizen relative loading), and adds a `watch-pkg` plugin so Vite reloads on wasm rebuild — so no `pnpm i` is needed after each rebuild. `www/src/style.css` centres a letterboxed 16:9 stage; the canvas backing store is 1920×1080 and CSS-scaled to fit.
 
 ## Tizen
 

@@ -18,13 +18,13 @@ export default defineConfig({
   plugins: [wasm(), watchPkg()],
   resolve: {
     alias: {
-      "rs-wasm-leanback": pkgDir,
+      "rs-wasm-tv-app": pkgDir,
     },
   },
   server: {
     fs: { allow: [path.resolve(__dirname, "..")] },
   },
   optimizeDeps: {
-    exclude: ["rs-wasm-leanback"],
+    exclude: ["rs-wasm-tv-app"],
   },
 });

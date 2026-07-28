@@ -1,6 +1,6 @@
 # Architecture
 
-`rs-wasm-leanback` is a retained-mode TV/leanback UI written in Rust, compiled to
+`rs-wasm-tv-app` is a retained-mode TV/leanback UI written in Rust, compiled to
 WebAssembly, and rendered with WebGL2 through raw `web-sys`. This document is the
 map: what the layers are, how they talk, and where the boundaries are drawn.
 
@@ -182,7 +182,7 @@ Input is event-driven and separate: `keydown`/`keyup` → `map_key` → `App::ha
 - **Rust → wasm:** `wasm-pack` emits `pkg/` (gitignored). `mise run dev` runs
   `cargo watch → wasm-pack build --dev` alongside the Vite dev server.
 - **JS host:** `www/` (Vite + TS). `vite.config.ts` aliases the package name
-  `rs-wasm-leanback` to `../pkg`, uses `vite-plugin-wasm`, and sets `base: "./"` for
+  `rs-wasm-tv-app` to `../pkg`, uses `vite-plugin-wasm`, and sets `base: "./"` for
   Tizen relative loading. A `watch-pkg` plugin reloads on wasm rebuild.
 - **GitHub Pages:** `mise run docs` builds and copies `www/dist` → `docs/`. That `docs/`
   is generated output — do not hand-edit it (this doc set lives in `doc/`).

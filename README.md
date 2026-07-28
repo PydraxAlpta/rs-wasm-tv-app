@@ -1,4 +1,4 @@
-# rs-wasm-leanback
+# rs-wasm-tv-app
 
 A retained-mode **TV/leanback UI** — top nav + a hero banner + Netflix-style carousels ("rails" of cards) + a metadata overlay + a video player — written in Rust, compiled to WebAssembly, and rendered entirely with **WebGL2** via raw `web-sys`. Remote/d-pad keys drive a fixed-focus spatial navigation model. A Vite + TypeScript app in `www/` hosts the wasm module and owns `<video>` playback, and `tizen/config.xml` targets Samsung Tizen TVs at 1920×1080.
 

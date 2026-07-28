@@ -14,7 +14,7 @@
     "moduleDetection": "force",
     "noEmit": true,
     "paths": {
-      "rs-wasm-leanback": ["../pkg"]
+      "rs-wasm-tv-app": ["../pkg"]
     },
 
     /* Linting */

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <widget xmlns="http://www.w3.org/ns/widgets" xmlns:tizen="http://tizen.org/ns/widgets"
-  id="http://rs-wasm-leanback.local/app" version="0.1.0" viewmodes="maximized">
-  <tizen:application id="rsWasmLeanback.App" package="rsWasmLeanback" required_version="2.3"/>
+  id="http://rs-wasm-tv-app.local/app" version="0.1.0" viewmodes="maximized">
+  <tizen:application id="rsWasmTvApp.App" package="rsWasmTvApp" required_version="2.3"/>
   <content src="index.html"/>
   <feature name="http://tizen.org/feature/screen.size.normal.1080.1920"/>
   <name>WASM TV</name>

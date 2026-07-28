@@ -1,5 +1,5 @@
 [package]
-name = "rs-wasm-leanback"
+name = "rs-wasm-tv-app"
 version = "0.1.0"
 authors = ["Pauras Ranade <Pauras.Ranade@ril.com>"]
 edition = "2018"

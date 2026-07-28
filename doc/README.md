@@ -1,6 +1,6 @@
 # Design docs
 
-In-depth documentation for `rs-wasm-leanback`. Start with the top-level
+In-depth documentation for `rs-wasm-tv-app`. Start with the top-level
 [`README.md`](../README.md) for setup/commands and [`CLAUDE.md`](../CLAUDE.md) for the
 condensed orientation; these files go deeper.
 

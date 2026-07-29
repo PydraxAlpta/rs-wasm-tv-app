@@ -26,7 +26,7 @@ use tv_ui_webgl::{context_from_canvas, ImageCache, WebGl2Renderer};
 /// Design-space resolution for an embedded carousel strip — much smaller than
 /// `tv-app`'s full 1920×1080 stage, since this mounts into existing page layout.
 const EMBED_WIDTH: u32 = 960;
-const EMBED_HEIGHT: u32 = 600;
+const EMBED_HEIGHT: u32 = 660;
 
 /// Dark, opaque clear — unlike `tv-app` there is no `<video>` underlay to show
 /// through, so the canvas paints its own background.
@@ -82,13 +82,15 @@ impl From<CatalogDto> for Catalog {
 /// `tv_ui::Metrics` has no hardcoded design resolution, so any consumer can
 /// build its own like this.
 ///
-/// `rail_step` needs more headroom than a naive scale-down of `Metrics::tv()`
-/// suggests: `RailList::render` draws the focused card's title below each row
-/// at a *fixed* pixel font size (28px name + 30px next rail title, regardless
-/// of `Metrics`), so shrinking `card_h` alone without keeping that fixed text
-/// height in mind causes the next rail's title to overlap it.
+/// Two `RailList::render` details don't scale with `Metrics` and drive the
+/// numbers below: it draws each rail's title at a *fixed* 30px font at
+/// `row_top - rail_title_h`, and the focused card's name at a *fixed* 28px
+/// font at `row_top + card_h + 14`. So `rail_title_h` must stay >= the fixed
+/// title font size (else the title text spills downward past `row_top`, into
+/// its own row's cards), and `rail_step` must leave room for the *previous*
+/// row's fixed-size name text before the next row's title starts.
 fn embed_metrics() -> Metrics {
-    let rail_title_h = 18.0;
+    let rail_title_h = 40.0;
     let card_h = 110.0;
     Metrics {
         safe_margin: 24.0,
@@ -98,7 +100,7 @@ fn embed_metrics() -> Metrics {
         card_h,
         card_gap: 10.0,
         rail_title_h,
-        rail_step: card_h + rail_title_h + 60.0,
+        rail_step: card_h + rail_title_h + 70.0,
         focus_x: 24.0,
     }
 }

@@ -2,7 +2,8 @@ import path from "node:path";
 import { defineConfig, type Plugin } from "vite";
 import wasm from "vite-plugin-wasm";
 
-const pkgDir = path.resolve(__dirname, "../pkg");
+const pkgDir = path.resolve(__dirname, "../../../crates/tv-app/pkg");
+const repoRoot = path.resolve(__dirname, "../../..");
 
 function watchPkg(): Plugin {
   return {
@@ -22,7 +23,7 @@ export default defineConfig({
     },
   },
   server: {
-    fs: { allow: [path.resolve(__dirname, "..")] },
+    fs: { allow: [repoRoot] },
   },
   optimizeDeps: {
     exclude: ["rs-wasm-tv-app"],

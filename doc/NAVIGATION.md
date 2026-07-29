@@ -1,8 +1,9 @@
 # Navigation & the leanback focus model
 
-This is the subtle part of the codebase. Read it alongside `src/metrics.rs`,
-`src/anim.rs`, `src/ui/components/carousel.rs`, `src/ui/components/rail_list.rs`,
-`src/ui/components/banner.rs`, `src/ui/pages/catalog.rs`, and `src/ui/pages/shell.rs`.
+This is the subtle part of the codebase. Read it alongside `crates/tv-ui/src/metrics.rs`,
+`crates/tv-ui/src/anim.rs`, `crates/tv-ui/src/ui/components/carousel.rs`,
+`crates/tv-ui/src/ui/components/rail_list.rs`, `crates/tv-ui/src/ui/components/banner.rs`,
+`crates/tv-ui/src/ui/pages/catalog.rs`, and `crates/tv-ui/src/ui/pages/shell.rs`.
 
 ## Fixed focus anchor, moving content
 
@@ -23,7 +24,7 @@ integer focused index, the focused card sits exactly on the anchor. While a twee
 mid-flight the whole grid is offset by the fractional part, which is what produces the
 smooth slide.
 
-## Tween: frame-rate-independent smoothing (`src/anim.rs`)
+## Tween: frame-rate-independent smoothing (`crates/tv-ui/src/anim.rs`)
 
 Every animated quantity is a `Tween` — a scalar easing toward a target with time-constant
 `tau`. Per step it covers `1 - e^(-dt/tau)` of the remaining distance, so behaviour is
@@ -129,7 +130,7 @@ returns to the nav. Left/Right on the nav switches tab, lazily creating the targ
 retargeting `slide`. An open `MetadataOverlay` intercepts keys first (so Back closes it
 without popping the shell); otherwise Back on the root pops the stack → app exit.
 
-## Key mapping (`src/wasm/mod.rs`)
+## Key mapping (`crates/tv-app/src/lib.rs`)
 
 The logical `Key` enum (`Up/Down/Left/Right/Enter/Back`) is decoupled from physical keys.
 `map_key` translates browser `KeyboardEvent`s:

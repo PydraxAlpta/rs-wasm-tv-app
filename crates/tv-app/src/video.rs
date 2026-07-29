@@ -3,7 +3,7 @@
 //! Rust creates `#player-video`; JS owns all subsequent media control. The
 //! adapter discovers the element by id (TV: at most one underlay).
 
-use crate::screen::VideoSink;
+use tv_ui::screen::VideoSink;
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen(typescript_custom_section)]

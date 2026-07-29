@@ -1,0 +1,9 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "paths": {
+      "tv-ui-web": ["../../../crates/tv-ui-web/pkg"]
+    }
+  },
+  "include": ["src"]
+}

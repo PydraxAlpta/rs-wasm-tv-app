@@ -1,61 +1,19 @@
-[package]
-name = "rs-wasm-tv-app"
+[workspace]
+resolver = "2"
+members = ["crates/tv-ui", "crates/tv-ui-webgl", "crates/tv-ui-web", "crates/tv-app"]
+
+[workspace.package]
 version = "0.1.0"
 authors = ["Pauras Ranade <Pauras.Ranade@ril.com>"]
 edition = "2018"
 
-[lib]
-crate-type = ["cdylib", "rlib"]
-
-[features]
-default = ["console_error_panic_hook"]
-
-[dependencies]
+[workspace.dependencies]
 wasm-bindgen = "0.2.84"
-
-# The `console_error_panic_hook` crate provides better debugging of panics by
-# logging them with `console.error`. This is great for development, but requires
-# all the `std::fmt` and `std::panicking` infrastructure, so isn't great for
-# code size when deploying.
-console_error_panic_hook = { version = "0.1.7", optional = true }
-
 js-sys = "0.3.103"
-
-# LRU for image/text GPU caches. default-features off → std HashMap only (no hashbrown),
-# keeping the wasm footprint small.
-[target.'cfg(target_arch = "wasm32")'.dependencies]
+web-sys = "0.3.103"
 lru = { version = "0.18", default-features = false }
-
-[dependencies.web-sys]
-version = "0.3.103"
-features = [
-    "Window",
-    "Document",
-    "Element",
-    "HtmlElement",
-    "Node",
-    "EventTarget",
-    "Event",
-    "KeyboardEvent",
-    "CssStyleDeclaration",
-    "Performance",
-    "HtmlCanvasElement",
-    "HtmlImageElement",
-    "HtmlVideoElement",
-    "HtmlMediaElement",
-    "CanvasRenderingContext2d",
-    "TextMetrics",
-    "WebGl2RenderingContext",
-    "WebGlContextAttributes",
-    "WebGlShader",
-    "WebGlProgram",
-    "WebGlBuffer",
-    "WebGlVertexArrayObject",
-    "WebGlTexture",
-    "WebGlUniformLocation",
-]
-[dev-dependencies]
-wasm-bindgen-test = "0.3.34"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 
 [profile.release]
 # Tell `rustc` to optimize for small code size.

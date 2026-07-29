@@ -1,0 +1,37 @@
+[package]
+name = "tv-ui-webgl"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+tv-ui = { path = "../tv-ui" }
+wasm-bindgen.workspace = true
+js-sys.workspace = true
+# LRU for image/text GPU caches. default-features off → std HashMap only (no
+# hashbrown), keeping the wasm footprint small.
+lru.workspace = true
+
+[dependencies.web-sys]
+workspace = true
+features = [
+    "Window",
+    "Document",
+    "Element",
+    "Event",
+    "HtmlCanvasElement",
+    "HtmlImageElement",
+    "CanvasRenderingContext2d",
+    "TextMetrics",
+    "WebGl2RenderingContext",
+    "WebGlContextAttributes",
+    "WebGlShader",
+    "WebGlProgram",
+    "WebGlBuffer",
+    "WebGlVertexArrayObject",
+    "WebGlTexture",
+    "WebGlUniformLocation",
+]

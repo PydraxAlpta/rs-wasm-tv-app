@@ -1,34 +1,33 @@
-//! Browser entry point: builds the DOM, drives the rAF loop, and routes remote
-//! / keyboard input into the screen stack.
+//! rs-wasm-tv-app: the browser entry point. Builds the DOM, drives the rAF
+//! loop, and routes remote / keyboard input into the `tv-ui` screen stack.
+//! This crate is the thin composition layer over the reusable `tv-ui`
+//! (carousels + navigation) and `tv-ui-webgl` (WebGL2 renderer) libraries —
+//! it owns the DOM, the video player wiring, and the sample catalog.
 //!
 //! TV / d-pad key map:
 //!   Arrows        → focus navigation
 //!   Enter / Space → activate (open card / toggle playback)
 //!   Escape / Backspace / Tizen Back (keyCode 10009) → back / exit
 
-mod image_cache;
+mod utils;
 mod video;
-mod webgl2;
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use image_cache::ImageCache;
 use video::{JsPlayer, JsPlayerSink};
-use webgl2::WebGl2Renderer;
 
-use crate::renderer::Renderer;
-use crate::screen::{Ctx, Key, Screen, Transition};
-use crate::ui::MainShell;
-use crate::utils::set_panic_hook;
-use crate::{Catalog, Color, Metrics, DESIGN_HEIGHT, DESIGN_WIDTH};
+use tv_ui::renderer::Renderer;
+use tv_ui::screen::{Ctx, Key, Screen, Transition};
+use tv_ui::ui::MainShell;
+use tv_ui::{Catalog, Color, Metrics, DESIGN_HEIGHT, DESIGN_WIDTH};
+use tv_ui_webgl::{context_from_canvas, ImageCache, WebGl2Renderer};
+use utils::set_panic_hook;
 
 use js_sys::Reflect;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
-use web_sys::{
-    HtmlCanvasElement, HtmlElement, KeyboardEvent, WebGl2RenderingContext, WebGlContextAttributes,
-};
+use web_sys::{HtmlCanvasElement, HtmlElement, KeyboardEvent};
 
 /// Transparent clear so the `<video>` underlay shows through in the player.
 const CLEAR: Color = Color::rgba(0, 0, 0, 0);
@@ -184,7 +183,7 @@ pub fn setup_app(root: HtmlElement, player: JsPlayer) {
     let canvas = query_el::<HtmlCanvasElement>(&root, "#ui");
     canvas.set_width(DESIGN_WIDTH);
     canvas.set_height(DESIGN_HEIGHT);
-    let gl = webgl2_context(&canvas);
+    let gl = context_from_canvas(&canvas).expect_throw("WebGL2 is not available in this browser");
 
     let images = ImageCache::new();
     let renderer = WebGl2Renderer::new(gl, DESIGN_WIDTH, DESIGN_HEIGHT, images);
@@ -214,23 +213,6 @@ fn query_el<T: JsCast>(root: &HtmlElement, selector: &str) -> T {
         .unwrap_or_else(|| wasm_bindgen::throw_str(&format!("element {selector} missing")))
         .dyn_into::<T>()
         .unwrap_or_else(|_| wasm_bindgen::throw_str(&format!("element {selector} has wrong type")))
-}
-
-/// WebGL2 context configured for a transparent overlay over the video.
-fn webgl2_context(canvas: &HtmlCanvasElement) -> WebGl2RenderingContext {
-    let attrs = WebGlContextAttributes::new();
-    attrs.set_antialias(false);
-    attrs.set_alpha(true);
-    attrs.set_depth(false);
-    attrs.set_stencil(false);
-    attrs.set_premultiplied_alpha(false);
-
-    canvas
-        .get_context_with_context_options("webgl2", attrs.as_ref())
-        .expect_throw("Failed to get WebGL2 context")
-        .expect_throw("WebGL2 is not available in this browser")
-        .dyn_into()
-        .unwrap_throw()
 }
 
 fn map_key(event: &KeyboardEvent) -> Option<Key> {

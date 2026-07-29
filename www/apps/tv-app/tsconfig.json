@@ -1,0 +1,9 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "paths": {
+      "rs-wasm-tv-app": ["../../../crates/tv-app/pkg"]
+    }
+  },
+  "include": ["src"]
+}

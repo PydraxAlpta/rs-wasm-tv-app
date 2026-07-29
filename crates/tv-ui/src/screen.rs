@@ -32,6 +32,28 @@ pub trait VideoSink {
     fn set_visible(&mut self, visible: bool);
 }
 
+/// A [`VideoSink`] that drops every call. Useful for hosts that embed
+/// video-agnostic widgets (e.g. a bare `RailList`) and have no player to wire up.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct NullVideoSink;
+
+impl VideoSink for NullVideoSink {
+    fn load_and_play(&mut self, _url: &str) {}
+    fn play(&mut self) {}
+    fn pause(&mut self) {}
+    fn is_paused(&self) -> bool {
+        true
+    }
+    fn current_time(&self) -> f64 {
+        0.0
+    }
+    fn duration(&self) -> f64 {
+        0.0
+    }
+    fn seek(&mut self, _t: f64) {}
+    fn set_visible(&mut self, _visible: bool) {}
+}
+
 /// Shared services handed to a screen each update/render/key call.
 pub struct Ctx<'a> {
     pub catalog: &'a Catalog,

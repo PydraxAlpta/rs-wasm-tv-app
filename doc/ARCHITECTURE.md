@@ -11,34 +11,44 @@ For the two hardest sub-systems see the companion docs:
 
 ## The core / glue split
 
-The single defining decision (`src/lib.rs`): everything that can be pure Rust *is*
-pure Rust, and only the irreducible browser code is compiled for wasm.
+The single defining decision, now expressed as **crate boundaries** rather than a
+`cfg(wasm32)` gate: everything that can be pure Rust *is* pure Rust, and only the
+irreducible browser code is compiled for wasm. The workspace has four crates — the
+three below, plus `crates/tv-ui-web` (a second, smaller wasm-bindgen binding,
+`mountCarousels`, that mounts a `tv-ui` widget onto a host-provided canvas instead of
+taking over the whole screen; see "Build & hosting" below):
 
 ```
-Platform-agnostic core (unit-testable off-wasm)      Browser glue (cfg(wasm32))
-──────────────────────────────────────────────      ──────────────────────────
-model     content: Card / Rail / BannerSlide         wasm/mod.rs      entry, rAF loop, input
-geom      Rect / Size / Insets                        wasm/webgl2.rs   Renderer impl
-metrics   Metrics (card sizes, band heights)          wasm/video.rs    VideoSink → JS PlayerAdapter
-anim      Tween (exponential smoothing)               wasm/image_cache async <img> LRU
-screen    Screen / Transition / VideoSink / Ctx / Key utils.rs         panic hook
-renderer  Renderer trait (draw primitives)
+crates/tv-ui/            crates/tv-ui-webgl/          crates/tv-app/
+(pure rlib)              (web-sys rlib)               (cdylib, pkg "rs-wasm-tv-app")
+─────────────────────    ─────────────────────────    ───────────────────────────────
+model     content        webgl2.rs   Renderer impl    lib.rs    entry, rAF loop, input
+geom      Rect/Size       image_cache async <img> LRU  video.rs  VideoSink → JS PlayerAdapter
+metrics   Metrics                                      utils.rs  panic hook
+anim      Tween
+screen    Screen/Transition/VideoSink/Ctx/Key
+renderer  Renderer trait
 theme     colour palette
 buffer    Color
 ui/       widget tree: components/ + pages/
 ```
 
-The `ui`, `model`, `metrics`, `anim`, `screen`, `renderer` modules never mention
-`web-sys`. That is what makes the whole navigation/layout/animation surface testable
-with a plain `cargo test` (see the `#[cfg(test)]` modules throughout, which drive the
-UI with a `NullSink` video stub).
+`tv-ui` never mentions `web-sys`/`wasm-bindgen`/`js-sys`. That is what makes the whole
+navigation/layout/animation surface testable with a plain `cargo test` (see the
+`#[cfg(test)]` modules throughout, which drive the UI with a `NullSink` video stub).
+`tv-ui-webgl` depends only on `tv-ui` and provides `WebGl2Renderer` given an
+already-created `WebGl2RenderingContext` — it never creates or owns a canvas, so it
+can in principle be mounted into any DOM. `tv-app` is the thin composition layer for
+the full leanback experience: it owns the DOM, wires the sample catalog, and exposes
+the wasm-bindgen entry point `setupApp`. In short: `tv-ui` + `tv-ui-webgl` are reusable
+libraries; `tv-app` and `tv-ui-web` are two different products built on them.
 
 ## Three decoupling traits
 
 Everything crosses the core/glue boundary through three traits declared in the core
 and implemented in the glue:
 
-### `Renderer` (`src/renderer.rs`)
+### `Renderer` (`crates/tv-ui/src/renderer.rs`)
 
 The stable set of drawing primitives the UI is allowed to call: `stroke_line`,
 `stroke_circle`, `fill_circle`, `fill_triangle`, `draw_image`, `draw_text`. Composite
@@ -47,7 +57,7 @@ so the UI composes rather than growing the trait. Motion/streaming extras — `s
 `prefetch_image`, `draw_image_cached` — also have safe default behaviours so a minimal
 backend still works. The only production implementation is `WebGl2Renderer`.
 
-### `Screen` + `Transition` (`src/screen.rs`)
+### `Screen` + `Transition` (`crates/tv-ui/src/screen.rs`)
 
 A screen is a full-screen view with `update` / `render` / `handle_key` /
 `handle_key_up`. The app keeps a `stack: Vec<Box<dyn Screen>>`, ticks and renders only
@@ -57,11 +67,11 @@ the top screen, and a screen requests navigation by returning a `Transition`:
 - `Transition::Pop` — pops; popping the last screen empties the stack and exits the app.
 - `Transition::None` — stay.
 
-### `VideoSink` (`src/screen.rs`)
+### `VideoSink` (`crates/tv-ui/src/screen.rs`)
 
 Abstracts `<video>` so screens hold no `web-sys`. `load_and_play` / `play` / `pause` /
 `is_paused` / `current_time` / `duration` / `seek` / `set_visible`. On wasm it is
-`JsPlayerSink`, which forwards each call to a JS `PlayerAdapter` (`www/src/player.ts`)
+`JsPlayerSink`, which forwards each call to a JS `PlayerAdapter` (`www/apps/tv-app/src/player.ts`)
 that actually owns the `<video>` element. Tests use a trivial `NullSink`.
 
 ### `Ctx<'a>`
@@ -70,7 +80,7 @@ The bundle handed to every `update`/`render`/`handle_key`: `catalog: &Catalog`,
 `metrics: &Metrics`, `video: &mut dyn VideoSink`. This is what lets widgets read content
 and geometry and drive playback without any globals.
 
-## The widget layer (`src/ui/`)
+## The widget layer (`crates/tv-ui/src/ui/`)
 
 The UI is a retained-mode widget tree. `ui/components/` holds reusable pieces;
 `ui/pages/` holds the full-screen views that sit on the screen stack.
@@ -123,7 +133,7 @@ to the `FocusScope` child index.
 | `card` | `card.rs` | Poster tile + multi-layer focus-ring primitives. |
 | `Header` | `header.rs` | Static title band (available building block). |
 
-### Pages (`src/ui/pages/`)
+### Pages (`crates/tv-ui/src/ui/pages/`)
 
 - **`MainShell`** — the app root `Screen`. Owns the `NavBar` and a lazily-populated
   `[Option<CatalogPage>; 3]` (Home loads eagerly, the others on first visit). A `slide`
@@ -141,7 +151,7 @@ to the `FocusScope` child index.
   via a fade `Tween`. Left/Right seek ±5 s, Enter toggles play/pause, Back returns to
   browse.
 
-## The app object (`src/wasm/mod.rs`)
+## The app object (`crates/tv-app/src/lib.rs`)
 
 `App` is the wasm-side owner: `renderer`, `video`, `catalog`, `metrics`, the screen
 `stack`, timing state, and the perf-HUD element. Two behaviours are worth knowing:
@@ -153,7 +163,7 @@ to the `FocusScope` child index.
   pops, sees the stack is empty, and calls `exit_app()`. A `Back` consumed by an open
   overlay is turned into `Transition::None` and must *not* exit.
 
-## Content model (`src/model.rs`)
+## Content model (`crates/tv-ui/src/model.rs`)
 
 `Catalog { banners: Vec<BannerSlide>, rails: Vec<Rail> }`, `Rail { title, cards }`,
 `Card { id, title, image_url }`. `Catalog::sample()` builds demo content (5 banners,
@@ -179,12 +189,19 @@ Input is event-driven and separate: `keydown`/`keyup` → `map_key` → `App::ha
 
 ## Build & hosting
 
-- **Rust → wasm:** `wasm-pack` emits `pkg/` (gitignored). `mise run dev` runs
-  `cargo watch → wasm-pack build --dev` alongside the Vite dev server.
-- **JS host:** `www/` (Vite + TS). `vite.config.ts` aliases the package name
-  `rs-wasm-tv-app` to `../pkg`, uses `vite-plugin-wasm`, and sets `base: "./"` for
-  Tizen relative loading. A `watch-pkg` plugin reloads on wasm rebuild.
-- **GitHub Pages:** `mise run docs` builds and copies `www/dist` → `docs/`. That `docs/`
-  is generated output — do not hand-edit it (this doc set lives in `doc/`).
+- **Rust → wasm:** `wasm-pack build crates/tv-app` emits `crates/tv-app/pkg/`; `wasm-pack
+  build crates/tv-ui-web` emits `crates/tv-ui-web/pkg/` (both gitignored) — `tv-ui`/
+  `tv-ui-webgl` are plain library crates pulled in as path dependencies, never built with
+  `wasm-pack` directly. `mise run dev` (default: both projects, `mise run dev <project>` for
+  one) runs `cargo watch → wasm-pack build ... --dev` alongside each app's Vite dev server.
+- **JS host:** `www/` is a pnpm workspace with two member apps, `www/apps/tv-app` and
+  `www/apps/embed`. Each app's `vite.config.ts` aliases its crate's package name
+  (`rs-wasm-tv-app` → `../../../crates/tv-app/pkg`, `tv-ui-web` → `../../../crates/tv-ui-web/pkg`)
+  and sets `base: "./"` for Tizen relative loading; a `watch-pkg` plugin reloads on wasm
+  rebuild. A shared `www/tsconfig.base.json` holds common compiler options.
+- **GitHub Pages:** `mise run docs` (default `tv-app`, or `mise run docs embed`) builds the
+  chosen project and copies its `dist/` → `docs/` — `docs/` can only ever hold one project's
+  output at a time, unlike `dev`/`build`/`preview` which default to running both. That
+  `docs/` is generated output — do not hand-edit it (this doc set lives in `doc/`).
 - **Tizen:** `tizen/config.xml` targets `tv-samsung`, landscape, 1920×1080. A `.wgt` is
-  packaged manually with Tizen Studio's CLI against `www/dist` + this config.
+  packaged manually with Tizen Studio's CLI against `www/apps/tv-app/dist` + this config.

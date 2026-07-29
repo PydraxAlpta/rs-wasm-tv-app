@@ -1,0 +1,47 @@
+:root {
+  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  background: #111;
+  color: #e8e8ee;
+}
+
+.page {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 3rem 1.5rem 5rem;
+  line-height: 1.5;
+}
+
+.page p {
+  color: #b9b9c4;
+}
+
+.page code {
+  background: #23232b;
+  padding: 0.1em 0.35em;
+  border-radius: 0.25em;
+}
+
+/* The injected widget: just another block in the page's own layout, sized to
+   the canvas's design-space aspect ratio (960x540). No full-screen takeover. */
+.carousel-embed {
+  margin: 2rem 0;
+}
+
+#carousel {
+  display: block;
+  width: 100%;
+  max-width: 640px;
+  aspect-ratio: 960 / 600;
+  background: #000;
+  border-radius: 0.5rem;
+  outline: none;
+}
+
+#carousel:focus-visible {
+  box-shadow: 0 0 0 2px #6ea8fe;
+}

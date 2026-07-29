@@ -1,0 +1,11 @@
+[package]
+name = "tv-ui"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+
+[lib]
+crate-type = ["rlib"]
+
+# Pure Rust: no wasm/web-sys/js-sys dependencies. Unit-testable off any target.
+[dependencies]

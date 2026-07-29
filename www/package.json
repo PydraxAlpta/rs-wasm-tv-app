@@ -2,16 +2,12 @@
   "name": "www",
   "private": true,
   "version": "0.0.0",
-  "type": "module",
+  "packageManager": "pnpm@11.13.0",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc && vite build",
-    "preview": "vite preview"
-  },
-  "devDependencies": {
-    "@types/node": "^26.1.1",
-    "typescript": "^7.0.0",
-    "vite": "8.1.4",
-    "vite-plugin-wasm": "^3.6.0"
+    "dev:tv-app": "pnpm --filter tv-app dev",
+    "dev:embed": "pnpm --filter embed dev",
+    "build": "pnpm -r build",
+    "build:tv-app": "pnpm --filter tv-app build",
+    "build:embed": "pnpm --filter embed build"
   }
 }

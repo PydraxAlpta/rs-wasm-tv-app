@@ -4,10 +4,9 @@ use std::num::NonZeroUsize;
 
 use lru::LruCache;
 
-use super::image_cache::{ImageCache, ImageCacheHandle};
-use crate::buffer::Color;
-use crate::renderer::Renderer;
+use crate::image_cache::{ImageCache, ImageCacheHandle};
 use js_sys::Float32Array;
+use tv_ui::{Color, Renderer};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use web_sys::{
@@ -562,7 +561,7 @@ impl Renderer for WebGl2Renderer {
         self.draw_texture_quad(x, y, w, h, &texture);
     }
 
-    fn set_clip(&mut self, clip: Option<crate::geom::Rect>) {
+    fn set_clip(&mut self, clip: Option<tv_ui::geom::Rect>) {
         self.flush_color_batches();
         match clip {
             Some(rect) if !rect.is_empty() => {

@@ -1,15 +1,16 @@
 # Rendering pipeline
 
-The UI is drawn entirely with WebGL2 through raw `web-sys`. The core never touches GL — it
-calls the `Renderer` trait (`src/renderer.rs`); the only production backend is
-`WebGl2Renderer` (`src/wasm/webgl2.rs`). This document covers how that backend turns
-primitive calls into draw calls, and how it composits over the `<video>` underlay.
+The UI is drawn entirely with WebGL2 through raw `web-sys`. The core (`tv-ui`) never
+touches GL — it calls the `Renderer` trait (`crates/tv-ui/src/renderer.rs`); the only
+production backend is `WebGl2Renderer` (`crates/tv-ui-webgl/src/webgl2.rs`). This document
+covers how that backend turns primitive calls into draw calls, and how it composits over
+the `<video>` underlay.
 
 ## Design space & the letterboxed stage
 
 All UI geometry is in a fixed **1920×1080 design space** (`DESIGN_WIDTH`/`DESIGN_HEIGHT` in
-`lib.rs`). The canvas backing store is exactly that size; CSS scales the whole 16:9 stage to
-fit the viewport with black letterboxing (`www/src/style.css`). Because both the design
+`crates/tv-ui/src/lib.rs`). The canvas backing store is exactly that size; CSS scales the whole 16:9 stage to
+fit the viewport with black letterboxing (`www/apps/tv-app/src/style.css`). Because both the design
 space and the stage are 16:9, scaling never distorts and no per-frame DPR math is needed.
 `WebGl2Renderer::to_ndc` maps design pixels → clip space `[-1, 1]` with Y flipped
 (design Y grows downward, GL Y grows upward).
@@ -64,7 +65,7 @@ fills and borders each batch into a single flush around the run of textured post
 call **no-ops until the texture exists** (hence the placeholder `CARD_BG` fill drawn first).
 Two caches sit behind it:
 
-- **`ImageCache`** (`src/wasm/image_cache.rs`) — an LRU of decoded `HtmlImageElement`s
+- **`ImageCache`** (`crates/tv-ui-webgl/src/image_cache.rs`) — an LRU of decoded `HtmlImageElement`s
   (cap 192), keyed by URL, with `Loading`/`Ready`/`Failed` status. `request` kicks off an
   `<img>` load with `crossorigin=anonymous`; `html_image` returns the element once `Ready`.
 - **GPU texture LRU** (`WebGl2Renderer.textures`, cap 96) — uploaded `WebGlTexture`s keyed

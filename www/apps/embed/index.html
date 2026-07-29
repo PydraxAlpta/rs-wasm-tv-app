@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>tv-ui-web embed demo</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <main class="page">
+      <h1>Some existing page</h1>
+      <p>
+        This is an ordinary DOM page — headings, paragraphs, no full-screen
+        takeover. The block below is a small WebGL canvas mounted with
+        <code>tv-ui-web</code>'s <code>mountCarousels()</code>, rendering a
+        few horizontal card rows from the <code>tv-ui</code> carousel/rail
+        widgets. Click the strip to focus it, then use the arrow keys.
+      </p>
+
+      <section class="carousel-embed">
+        <canvas id="carousel" tabindex="0"></canvas>
+      </section>
+
+      <p>
+        The rest of this page is unaffected — the canvas is just another
+        element in the layout, not a separate app shell.
+      </p>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,29 @@
+[package]
+name = "tv-ui-web"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+tv-ui = { path = "../tv-ui" }
+tv-ui-webgl = { path = "../tv-ui-webgl" }
+wasm-bindgen.workspace = true
+js-sys.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dependencies.web-sys]
+workspace = true
+features = [
+    "Window",
+    "Document",
+    "Element",
+    "EventTarget",
+    "Event",
+    "KeyboardEvent",
+    "Performance",
+    "HtmlCanvasElement",
+]

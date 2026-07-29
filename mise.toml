@@ -1,47 +1,191 @@
 # mise.toml — tools + tasks for generated projects
+#
+# Two web projects live under www/apps/: `tv-app` (the full leanback
+# experience, setupApp) and `embed` (the tv-ui-web carousel-in-existing-DOM
+# demo). Generalized commands (dev/build/preview) take a `project` argument
+# — `tv-app`, `embed`, or `both` (default) — and dispatch to per-project
+# tasks (`<verb>:tv-app`, `<verb>:embed`), each with a real `depends` chain
+# and sources/outputs, so mise's caching applies per project. `docs` is the
+# one exception: it can only ever publish one project's build to the single
+# docs/ directory, so it has no "both" and defaults to `tv-app`.
 
 [tools]
 node = "24"
 "npm:pnpm" = "11.13.0"
 
-[tasks."dev:wasm"]
-description = "Rebuild pkg/ on Rust changes"
-run = "cargo watch -s 'wasm-pack build --dev'"
-
-[tasks."dev:web"]
-description = "Vite dev server"
-dir = "www"
-run = "pnpm dev"
+# --- generalized commands: tv-app + embed (or one), default both -----------
 
 [tasks.dev]
-description = "Wasm watch + Vite in parallel"
-run = "mise run dev:wasm ::: dev:web"
-
-[tasks."build:wasm"]
-description = "Release wasm-pack build → pkg/"
-run = "wasm-pack build --release"
-
-[tasks."build:web"]
-description = "Vite production build"
-dir = "www"
-depends = ["build:wasm"]
-run = "pnpm build"
+description = "Run dev servers (wasm watch + Vite) for a project, or both (default)"
+usage = '''
+arg "<project>" default="both" {
+    choices "tv-app" "embed" "both"
+}
+'''
+run = """
+case "$usage_project" in
+  both) mise run dev:tv-app ::: dev:embed ;;
+  *) mise run "dev:$usage_project" ;;
+esac
+"""
 
 [tasks.build]
-description = "Release wasm + frontend"
-depends = ["build:web"]
+description = "Release build (wasm + frontend) for a project, or both (default)"
+usage = '''
+arg "<project>" default="both" {
+    choices "tv-app" "embed" "both"
+}
+'''
+run = """
+case "$usage_project" in
+  both) mise run build:tv-app ::: build:embed ;;
+  *) mise run "build:$usage_project" ;;
+esac
+"""
 
 [tasks.preview]
-description = "Serve the production build"
-dir = "www"
-depends = ["build"]
-run = "pnpm preview"
+description = "Serve a project's production build, or both (default)"
+usage = '''
+arg "<project>" default="both" {
+    choices "tv-app" "embed" "both"
+}
+'''
+run = """
+case "$usage_project" in
+  both) mise run preview:tv-app ::: preview:embed ;;
+  *) mise run "preview:$usage_project" ;;
+esac
+"""
 
 [tasks.docs]
-description = "Copy www/dist → docs/ for GitHub Pages"
-depends = ["build"]
+description = "Build one project and copy its dist → docs/ for GitHub Pages (default: tv-app — docs/ can only hold one project at a time)"
+usage = '''
+arg "<project>" default="tv-app" {
+    choices "tv-app" "embed"
+}
+'''
+run = "mise run docs:$usage_project"
+
+# --- tv-app: the full leanback experience (setupApp) ------------------------
+
+[tasks."dev:tv-app:wasm"]
+description = "Rebuild crates/tv-app/pkg/ on Rust changes"
+run = "cargo watch -s 'wasm-pack build crates/tv-app --dev'"
+
+[tasks."dev:tv-app:web"]
+description = "tv-app Vite dev server"
+dir = "www/apps/tv-app"
+run = "pnpm dev"
+
+[tasks."dev:tv-app"]
+description = "tv-app: wasm watch + Vite in parallel"
+run = "mise run dev:tv-app:wasm ::: dev:tv-app:web"
+
+[tasks."build:tv-app:wasm"]
+description = "Release wasm-pack build → crates/tv-app/pkg/"
+run = "wasm-pack build crates/tv-app --release"
+sources = [
+  "Cargo.toml",
+  "Cargo.lock",
+  "crates/tv-ui/Cargo.toml",
+  "crates/tv-ui/src/**/*.rs",
+  "crates/tv-ui-webgl/Cargo.toml",
+  "crates/tv-ui-webgl/src/**/*.rs",
+  "crates/tv-app/Cargo.toml",
+  "crates/tv-app/src/**/*.rs",
+]
+outputs = ["crates/tv-app/pkg/**/*"]
+
+[tasks."build:tv-app"]
+description = "tv-app: release wasm + Vite production build"
+dir = "www/apps/tv-app"
+depends = ["build:tv-app:wasm"]
+run = "pnpm build"
+sources = [
+  "src/**/*",
+  "index.html",
+  "package.json",
+  "tsconfig.json",
+  "vite.config.ts",
+  "../../../crates/tv-app/pkg/**/*",
+]
+outputs = ["dist/**/*"]
+
+[tasks."preview:tv-app"]
+description = "Serve the tv-app production build"
+dir = "www/apps/tv-app"
+depends = ["build:tv-app"]
+run = "pnpm preview"
+
+[tasks."docs:tv-app"]
+description = "Copy tv-app's dist → docs/ for GitHub Pages"
+depends = ["build:tv-app"]
 run = """
 rm -rf docs
 mkdir -p docs
-cp -R www/dist/. docs/
+cp -R www/apps/tv-app/dist/. docs/
 """
+sources = ["www/apps/tv-app/dist/**/*"]
+outputs = ["docs/**/*"]
+
+# --- embed: the tv-ui-web carousel-in-existing-DOM demo ---------------------
+
+[tasks."dev:embed:wasm"]
+description = "Rebuild crates/tv-ui-web/pkg/ on Rust changes"
+run = "cargo watch -s 'wasm-pack build crates/tv-ui-web --dev'"
+
+[tasks."dev:embed:web"]
+description = "embed app Vite dev server"
+dir = "www/apps/embed"
+run = "pnpm dev"
+
+[tasks."dev:embed"]
+description = "embed: wasm watch + Vite in parallel"
+run = "mise run dev:embed:wasm ::: dev:embed:web"
+
+[tasks."build:embed:wasm"]
+description = "Release wasm-pack build → crates/tv-ui-web/pkg/"
+run = "wasm-pack build crates/tv-ui-web --release"
+sources = [
+  "Cargo.toml",
+  "Cargo.lock",
+  "crates/tv-ui/Cargo.toml",
+  "crates/tv-ui/src/**/*.rs",
+  "crates/tv-ui-webgl/Cargo.toml",
+  "crates/tv-ui-webgl/src/**/*.rs",
+  "crates/tv-ui-web/Cargo.toml",
+  "crates/tv-ui-web/src/**/*.rs",
+]
+outputs = ["crates/tv-ui-web/pkg/**/*"]
+
+[tasks."build:embed"]
+description = "embed: release wasm + Vite production build"
+dir = "www/apps/embed"
+depends = ["build:embed:wasm"]
+run = "pnpm build"
+sources = [
+  "src/**/*",
+  "index.html",
+  "package.json",
+  "tsconfig.json",
+  "vite.config.ts",
+  "../../../crates/tv-ui-web/pkg/**/*",
+]
+outputs = ["dist/**/*"]
+
+[tasks."preview:embed"]
+description = "Serve the embed production build"
+dir = "www/apps/embed"
+depends = ["build:embed"]
+run = "pnpm preview"
+
+[tasks."docs:embed"]
+description = "Copy embed's dist → docs/ for GitHub Pages"
+depends = ["build:embed"]
+run = """
+rm -rf docs
+mkdir -p docs
+cp -R www/apps/embed/dist/. docs/
+"""
+sources = ["www/apps/embed/dist/**/*"]
+outputs = ["docs/**/*"]

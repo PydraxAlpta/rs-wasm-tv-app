@@ -45,3 +45,19 @@ body {
 #carousel:focus-visible {
   box-shadow: 0 0 0 2px #6ea8fe;
 }
+
+.status {
+  font: 500 0.95rem/1.4 ui-monospace, "Cascadia Code", "SF Mono", Menlo, monospace;
+  color: #6ea8fe;
+  margin: 0.5rem 0 0;
+}
+
+.detail {
+  min-height: 1.5em;
+  color: #b9b9c4;
+}
+
+.load-status {
+  font-size: 0.9rem;
+  color: #7a7a86;
+}

@@ -3,17 +3,17 @@
 //! Hold Up/Down (or Left/Right) keeps a runway ahead of the tween (same as
 //! horizontal); release eases out forward, coasting past a too-close stop.
 
-use crate::anim::Tween;
-use crate::geom::Rect;
-use crate::renderer::Renderer;
-use crate::screen::{Ctx, Key};
-use crate::theme;
 use super::card;
 use super::carousel::{
     self, HCarousel, CHAIN_THRESHOLD, HOLD_AHEAD, HOLD_SCROLL_DELAY, RAIL_BATCH, RAIL_TAU,
     RELEASE_MIN_RUN,
 };
 use super::widget::{Flex, FocusResult, Widget};
+use crate::anim::Tween;
+use crate::geom::Rect;
+use crate::renderer::Renderer;
+use crate::screen::{Ctx, Key};
+use crate::theme;
 
 pub struct RailList {
     focus_rail: usize,
@@ -103,10 +103,16 @@ impl RailList {
     }
 
     fn ensure_init(&mut self, ctx: &Ctx) {
+        let total = ctx.catalog.rails.len();
         if !self.initialized {
-            self.focus_col = vec![0; ctx.catalog.rails.len()];
-            self.loaded_rails = RAIL_BATCH.min(ctx.catalog.rails.len());
+            self.loaded_rails = RAIL_BATCH.min(total);
             self.initialized = true;
+        }
+        // Catalog may grow after init (e.g. a host appending more rails at
+        // runtime); extend the remembered-column table rather than resizing
+        // once, so newly appended rails get a tracked column too.
+        if self.focus_col.len() < total {
+            self.focus_col.resize(total, 0);
         }
     }
 
@@ -469,7 +475,7 @@ impl Widget for RailList {
 mod tests {
     use super::*;
     use crate::metrics::Metrics;
-    use crate::model::Catalog;
+    use crate::model::{Catalog, Rail};
     use crate::screen::VideoSink;
 
     struct NullSink;
@@ -504,6 +510,64 @@ mod tests {
     }
 
     #[test]
+    fn focus_col_grows_with_appended_rails() {
+        let mut cat = Catalog {
+            banners: vec![],
+            rails: vec![
+                Rail {
+                    title: "A".into(),
+                    cards: vec![],
+                },
+                Rail {
+                    title: "B".into(),
+                    cards: vec![],
+                },
+            ],
+        };
+        let metrics = Metrics::tv();
+        let mut video = NullSink;
+        let mut rails = RailList::new();
+
+        {
+            let ctx = Ctx {
+                catalog: &cat,
+                metrics: &metrics,
+                video: &mut video,
+            };
+            rails.ensure_init(&ctx);
+        }
+        assert_eq!(rails.focus_col.len(), 2);
+        rails.focus_col[0] = 3; // simulate a remembered column before growth
+
+        // Host appends a rail at runtime (e.g. `appendRails`) without remounting.
+        cat.rails.push(Rail {
+            title: "C".into(),
+            cards: vec![],
+        });
+        {
+            let ctx = Ctx {
+                catalog: &cat,
+                metrics: &metrics,
+                video: &mut video,
+            };
+            rails.ensure_init(&ctx);
+        }
+        assert_eq!(
+            rails.focus_col.len(),
+            3,
+            "focus_col should grow to track the appended rail"
+        );
+        assert_eq!(
+            rails.focus_col[0], 3,
+            "existing remembered column preserved"
+        );
+        assert_eq!(
+            rails.focus_col[2], 0,
+            "newly appended rail gets a default column"
+        );
+    }
+
+    #[test]
     fn hold_down_chains_before_settle() {
         with_rails(|rails, ctx| {
             rails.handle_key(Key::Down, ctx);
@@ -512,7 +576,11 @@ mod tests {
             for _ in 0..30 {
                 rails.update(1.0 / 60.0, ctx);
             }
-            assert!(rails.focus_rail() >= 2, "expected chain while held, got {}", rails.focus_rail());
+            assert!(
+                rails.focus_rail() >= 2,
+                "expected chain while held, got {}",
+                rails.focus_rail()
+            );
             rails.handle_key_up(Key::Down, ctx);
             let at_release = rails.focus_rail();
             for _ in 0..120 {
@@ -537,7 +605,10 @@ mod tests {
                     ahead
                 );
             }
-            assert!(rails.focus_rail() > 1, "should have queued multiple rails while held");
+            assert!(
+                rails.focus_rail() > 1,
+                "should have queued multiple rails while held"
+            );
         });
     }
 
@@ -603,7 +674,11 @@ mod tests {
                 }
             }
             let v = rails.anim_rail.value();
-            assert!(1.0 - v < RELEASE_MIN_RUN, "precondition: tight remaining, v={}", v);
+            assert!(
+                1.0 - v < RELEASE_MIN_RUN,
+                "precondition: tight remaining, v={}",
+                v
+            );
             let n = rails.visible_rail_count(ctx);
             rails.release_ease_rail(1, n);
             assert!(
@@ -653,7 +728,10 @@ mod tests {
     fn rails_load_in_batches_of_five() {
         with_rails(|rails, ctx| {
             rails.ensure_init(ctx);
-            assert_eq!(rails.loaded_rails(), RAIL_BATCH.min(ctx.catalog.rails.len()));
+            assert_eq!(
+                rails.loaded_rails(),
+                RAIL_BATCH.min(ctx.catalog.rails.len())
+            );
             // Walk toward the end of the first batch — should reveal the next 5.
             for _ in 0..4 {
                 rails.handle_key(Key::Down, ctx);

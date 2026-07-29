@@ -21,6 +21,16 @@
         <canvas id="carousel" tabindex="0"></canvas>
       </section>
 
+      <p id="status" class="status">Focused: —</p>
+      <p id="detail" class="detail">
+        Press Enter on a card to select it — the host page reacts via a
+        <code>select</code> event, e.g. to open a detail page.
+      </p>
+      <p id="load-status" class="load-status">
+        Scroll down toward the last rail — more load automatically, reacting
+        to the <code>focuschange</code> event.
+      </p>
+
       <p>
         The rest of this page is unaffected — the canvas is just another
         element in the layout, not a separate app shell.

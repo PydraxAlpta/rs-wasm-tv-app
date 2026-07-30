@@ -3,8 +3,8 @@
 //!
 //! Draws via WebGL2 into a canvas the host provides — this crate never creates
 //! or owns a canvas element itself, so it can be mounted into any DOM. Batches
-//! vector primitives (lines/triangles) and caches decoded images + rasterized
-//! text as GPU textures with bounded LRUs.
+//! vector primitives (lines/triangles), caches banner/text as per-URL GPU
+//! textures, and draws card rails via an instanced `TEXTURE_2D_ARRAY`.
 //!
 //! This is also the intended seam for a future JS-mountable component API (a
 //! `#[wasm_bindgen]` handle that mounts a `tv_ui` widget tree onto a caller's

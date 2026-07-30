@@ -2,6 +2,16 @@
 
 use crate::buffer::Color;
 
+/// One image blit for [`Renderer::draw_images`]: stretch `url` into the dest rect.
+#[derive(Debug, Clone, Copy)]
+pub struct ImageBlit<'a> {
+    pub x: i32,
+    pub y: i32,
+    pub w: i32,
+    pub h: i32,
+    pub url: &'a str,
+}
+
 /// Backend surface. Grows only when a **new drawing primitive** is genuinely
 /// needed; higher-level UI should compose these methods instead of extending
 /// the trait. `fill_rect`/`stroke_rect` are provided compositions.
@@ -34,6 +44,30 @@ pub trait Renderer {
     /// falls back to [`Self::draw_image`].
     fn draw_image_cached(&mut self, x: i32, y: i32, width: i32, height: i32, url: &str) {
         self.draw_image(x, y, width, height, url);
+    }
+
+    /// Draw many images in one batch (backends may use a texture array).
+    ///
+    /// Default loops [`Self::draw_image`]. Empty slices are a no-op.
+    fn draw_images(&mut self, images: &[ImageBlit<'_>]) {
+        for img in images {
+            if img.w <= 0 || img.h <= 0 {
+                continue;
+            }
+            self.draw_image(img.x, img.y, img.w, img.h, img.url);
+        }
+    }
+
+    /// Like [`Self::draw_images`], but only GPU-resident textures (motion path).
+    ///
+    /// Default loops [`Self::draw_image_cached`].
+    fn draw_images_cached(&mut self, images: &[ImageBlit<'_>]) {
+        for img in images {
+            if img.w <= 0 || img.h <= 0 {
+                continue;
+            }
+            self.draw_image_cached(img.x, img.y, img.w, img.h, img.url);
+        }
     }
 
     /// Kick off an async image load without drawing. Default no-op.

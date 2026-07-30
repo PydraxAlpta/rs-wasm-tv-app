@@ -8,7 +8,7 @@ use crate::anim::Tween;
 use crate::geom::Rect;
 use crate::metrics::Metrics;
 use crate::model::Card;
-use crate::renderer::Renderer;
+use crate::renderer::{ImageBlit, Renderer};
 use super::card;
 
 /// Time-constant (seconds) for carousel easing — small = snappy.
@@ -213,15 +213,25 @@ pub fn draw_card_row(
             card::draw_card_bg(r, rect);
         }
     }
+
+    let mut blits = Vec::new();
     for (ci, item) in cards.iter().enumerate() {
         if let Some(rect) = card_visible(ci) {
             let (x, y, w, h) = rect.as_i32();
-            match images {
-                ImageDraw::All => r.draw_image(x, y, w, h, &item.image_url),
-                ImageDraw::CachedOnly => r.draw_image_cached(x, y, w, h, &item.image_url),
-            }
+            blits.push(ImageBlit {
+                x,
+                y,
+                w,
+                h,
+                url: &item.image_url,
+            });
         }
     }
+    match images {
+        ImageDraw::All => r.draw_images(&blits),
+        ImageDraw::CachedOnly => r.draw_images_cached(&blits),
+    }
+
     for (ci, _) in cards.iter().enumerate() {
         if let Some(rect) = card_visible(ci) {
             card::draw_card_border(r, rect);

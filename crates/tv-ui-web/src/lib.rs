@@ -463,7 +463,15 @@ pub fn mount_carousels(
         .ok_or_else(|| JsValue::from_str("WebGL2 is not available in this browser"))?;
 
     let images = ImageCache::new();
-    let renderer = WebGl2Renderer::new(gl, EMBED_WIDTH, EMBED_HEIGHT, images);
+    let metrics = embed_metrics();
+    let renderer = WebGl2Renderer::new(
+        gl,
+        EMBED_WIDTH,
+        EMBED_HEIGHT,
+        images,
+        metrics.card_w as u32,
+        metrics.card_h as u32,
+    );
 
     let mut rail = RailList::new();
     rail.set_focused(true);
@@ -473,7 +481,7 @@ pub fn mount_carousels(
     let app = Rc::new(RefCell::new(App {
         renderer,
         catalog,
-        metrics: embed_metrics(),
+        metrics,
         rail,
         design: Rect::new(0.0, 0.0, EMBED_WIDTH as f32, EMBED_HEIGHT as f32),
         last_ts: None,

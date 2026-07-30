@@ -22,5 +22,5 @@ pub mod ui;
 pub use buffer::Color;
 pub use metrics::{Layout, Metrics};
 pub use model::Catalog;
-pub use renderer::Renderer;
+pub use renderer::{ImageBlit, Renderer};
 pub use screen::NullVideoSink;

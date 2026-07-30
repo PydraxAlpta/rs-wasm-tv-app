@@ -51,11 +51,12 @@ and implemented in the glue:
 ### `Renderer` (`crates/tv-ui/src/renderer.rs`)
 
 The stable set of drawing primitives the UI is allowed to call: `stroke_line`,
-`stroke_circle`, `fill_circle`, `fill_triangle`, `draw_image`, `draw_text`. Composite
-helpers (`fill_rect`, `stroke_rect`) are default methods built from those primitives,
-so the UI composes rather than growing the trait. Motion/streaming extras — `set_clip`,
-`prefetch_image`, `draw_image_cached` — also have safe default behaviours so a minimal
-backend still works. The only production implementation is `WebGl2Renderer`.
+`stroke_circle`, `fill_circle`, `fill_triangle`, `draw_image`, `draw_images`,
+`draw_text`. Composite helpers (`fill_rect`, `stroke_rect`) are default methods built
+from those primitives, so the UI composes rather than growing the trait. Motion/streaming
+extras — `set_clip`, `prefetch_image`, `draw_image_cached`, `draw_images_cached` — also
+have safe default behaviours so a minimal backend still works. The only production
+implementation is `WebGl2Renderer`.
 
 ### `Screen` + `Transition` (`crates/tv-ui/src/screen.rs`)
 

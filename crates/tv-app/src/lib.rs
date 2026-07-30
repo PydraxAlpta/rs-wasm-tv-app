@@ -208,14 +208,22 @@ pub fn setup_app(root: HtmlElement, player: JsPlayer) {
     let gl = context_from_canvas(&canvas).expect_throw("WebGL2 is not available in this browser");
 
     let images = ImageCache::new();
-    let renderer = WebGl2Renderer::new(gl, DESIGN_WIDTH, DESIGN_HEIGHT, images);
+    let metrics = Metrics::default();
+    let renderer = WebGl2Renderer::new(
+        gl,
+        DESIGN_WIDTH,
+        DESIGN_HEIGHT,
+        images,
+        metrics.card_w as u32,
+        metrics.card_h as u32,
+    );
     let perf_hud = query_el::<HtmlElement>(&root, "#perf-hud");
 
     let app = Rc::new(RefCell::new(App {
         renderer,
         video: JsPlayerSink::new(player),
         catalog: content::sample_catalog(),
-        metrics: Metrics::default(),
+        metrics,
         design: Rect::new(0.0, 0.0, DESIGN_WIDTH as f32, DESIGN_HEIGHT as f32),
         stack: vec![Box::new(MainShell::new(
             "WASM TV".to_string(),

@@ -33,9 +33,9 @@ The WebGL2 context is created with `alpha: true`, `antialias: false`, `depth: fa
 canvas be a see-through overlay: each frame is cleared to `rgba(0,0,0,0)` so the video
 shows through wherever the UI paints nothing (the whole point in `PlayerScreen`).
 
-## Two pipelines: batched vector, and textured quads
+## Three pipelines: batched vector, single textured quads, and instanced array
 
-The backend has **two GL programs**:
+The backend has **three GL programs**:
 
 1. **Vector program** — flat-coloured geometry. Vertices are design-pixel
    `(x, y, r, g, b, a)` (`FLOATS_PER_VERT = 6`); the VS maps `xy` to NDC.
@@ -45,8 +45,15 @@ The backend has **two GL programs**:
    `fill_rect`/`stroke_rect` are the trait's default compositions into triangles/lines.
 
 2. **Texture program** — one textured quad at a time. Vertices are design-pixel
-   `(x, y, u, v)` (`FLOATS_PER_TEX_VERT = 4`). Used for both images and rasterized text.
-   Alpha blending (`SRC_ALPHA, ONE_MINUS_SRC_ALPHA`) is enabled only around textured draws.
+   `(x, y, u, v)` (`FLOATS_PER_TEX_VERT = 4`). Used for banner `draw_image` and
+   rasterized text. Alpha blending (`SRC_ALPHA, ONE_MINUS_SRC_ALPHA`) is enabled
+   only around textured draws.
+
+3. **Array program** — instanced card posters via `draw_images` /
+   `draw_images_cached`. A unit quad plus per-instance `(x, y, w, h, layer)` feeds
+   a fixed-size `TEXTURE_2D_ARRAY` (layer WxH passed into `WebGl2Renderer::new`,
+   depth `IMAGE_TEX_CAP = 96`). One bind + one `drawArraysInstanced` paints a whole
+   rail's visible posters.
 
 ### Batching and flush order
 
@@ -55,42 +62,40 @@ calls as possible. The batches are flushed (`flush_color_batches`) at exactly th
 all chosen to **preserve draw order**:
 
 - `end_frame` — final flush.
-- before **every** textured quad (`draw_image`, `draw_image_cached`, `draw_text`) — so a
-  poster painted after a card background actually lands on top of it.
+- before textured work (`draw_image`, `draw_images`, `draw_text`, and their `_cached`
+  variants) — so a poster painted after a card background actually lands on top of it.
 - on `set_clip` — so geometry queued under one scissor rect isn't drawn under another.
 
 This ordering is why `draw_card_row` (`carousel.rs`) paints a rail in **three passes** —
-all card backgrounds, then all images, then all borders — instead of per-card: it lets the
-fills and borders each batch into a single flush around the run of textured posters.
+all card backgrounds, then one `draw_images` batch, then all borders — instead of
+per-card: fills and borders each batch into a single flush around the instanced posters.
 
-## Images: async load + double LRU (`image_cache.rs` + `webgl2.rs`)
+## Images: async load + caches (`image_cache.rs` + `webgl2.rs`)
 
-`draw_image(url)` cannot block on a network fetch, so image loading is asynchronous and the
-call **no-ops until the texture exists** (hence the placeholder `CARD_BG` fill drawn first).
-Two caches sit behind it:
+`draw_image` / `draw_images` cannot block on a network fetch, so image loading is
+asynchronous and missing textures **no-op** (hence the placeholder `CARD_BG` fill
+drawn first). Caches:
 
 - **`ImageCache`** (`crates/tv-ui-webgl/src/image_cache.rs`) — an LRU of decoded `HtmlImageElement`s
   (cap 192), keyed by URL, with `Loading`/`Ready`/`Failed` status. `request` kicks off an
   `<img>` load with `crossorigin=anonymous`; `html_image` returns the element once `Ready`.
-- **GPU texture LRU** (`WebGl2Renderer.textures`, cap 96) — uploaded `WebGlTexture`s keyed
-  by URL. Eviction deletes the GL texture. A separate LRU (`text_textures`, cap 192) holds
+- **Card array** (`TEXTURE_2D_ARRAY` + `array_slots` URL→layer LRU, cap 96) — used by
+  `draw_images`. Sources are resampled into the layer size via a scratch canvas, then
+  `texSubImage3D`. Eviction returns the layer index to a free list.
+- **Per-URL `TEXTURE_2D` LRU** (`textures`, cap 96) — banner / odd-size `draw_image`.
+  Eviction deletes the GL texture. A separate LRU (`text_textures`, cap 192) holds
   rasterized text.
 
-The two caps are deliberately asymmetric: VRAM is the scarce resource on a TV, so the
-texture cache is kept tight (visible rails + prefetch window, ~96), while decoded `<img>`
-sources — cheap in system RAM — are retained more generously (~192) so re-upload after a
-texture eviction (e.g. reverse-scroll, tab return) skips the network fetch + decode.
+The VRAM caps stay tight (~96) while decoded `<img>` sources are retained more
+generously (~192) so re-upload after eviction skips the network fetch + decode.
 
-For that to pay off, the two LRUs must stay coherent. The hot draw path returns as soon as
-the GPU texture is found and never re-reads `ImageCache`, so a poster that's on screen every
-frame would otherwise drift toward eviction in the image cache while its texture stays hot.
-To prevent that, each textured draw calls `ImageCache::touch(url)` — a promote-if-present
-that reorders the image LRU to match on-screen usage but never starts a fetch (the upload
-path already promotes via `html_image`).
+For that to pay off, the GPU and decode LRUs must stay coherent. Hot draw paths call
+`ImageCache::touch(url)` — promote-if-present, never starts a fetch.
 
-`draw_textured_quad` prefers an already-uploaded texture even if the source `<img>` was
-LRU-evicted; otherwise it pulls the ready `<img>` and uploads it (`texture_for`, with
-`UNPACK_FLIP_Y` so UVs match the design-space orientation).
+`draw_textured_quad` (2D path) prefers an already-uploaded texture even if the source
+`<img>` was LRU-evicted; otherwise it pulls the ready `<img>` and uploads it
+(`texture_for`, with `UNPACK_FLIP_Y` so UVs match the design-space orientation).
+The array path resamples through a scratch canvas into the fixed layer size the same way.
 
 ### Avoiding decode hitches during motion
 
@@ -98,11 +103,12 @@ Uploading a freshly-decoded poster mid-scroll causes a frame hitch. So during ra
 `RailList`:
 
 - calls `prefetch_image` on nearby posters (kicks off the async decode without drawing), and
-- draws with `draw_image_cached` — which paints **only** textures already resident on the
-  GPU and skips everything else.
+- draws with `draw_images_cached` — which paints **only** array layers already resident
+  and skips everything else.
 
-Once `anim_rail.is_settled()`, it switches back to full `draw_image` (`ImageDraw::All` vs
-`CachedOnly` in `carousel.rs`). The banner similarly guards its slides.
+Once `anim_rail.is_settled()`, it switches back to full `draw_images` (`ImageDraw::All` vs
+`CachedOnly` in `carousel.rs`). The banner similarly guards its slides via
+`draw_image_cached`.
 
 ## Text: rasterize on a 2D canvas, cache, upload
 

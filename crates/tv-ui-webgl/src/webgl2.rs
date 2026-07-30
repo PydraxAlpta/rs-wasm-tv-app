@@ -6,7 +6,7 @@ use lru::LruCache;
 
 use crate::image_cache::{ImageCache, ImageCacheHandle};
 use js_sys::Float32Array;
-use tv_ui::{Color, Renderer};
+use tv_ui::{Color, ImageBlit, Renderer};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use web_sys::{
@@ -18,9 +18,11 @@ use web_sys::{
 const CIRCLE_SEGMENTS: i32 = 64;
 const FLOATS_PER_VERT: usize = 6;
 const FLOATS_PER_TEX_VERT: usize = 4; // x, y, u, v
+const FLOATS_PER_INSTANCE: usize = 5; // x, y, w, h, layer
 /// GPU texture (VRAM) budget: visible rails + prefetch window, no placeholder
 /// flashes during motion. Kept smaller than the decoded-image cache
 /// (`super::image_cache::IMAGE_CACHE_CAP`) — VRAM is the scarce resource on a TV.
+/// Also the depth of the card `TEXTURE_2D_ARRAY`.
 const IMAGE_TEX_CAP: usize = 96;
 /// Titles / metadata strings churn as focus moves; keep a larger text budget.
 const TEXT_TEX_CAP: usize = 192;
@@ -77,6 +79,38 @@ void main() {
 }
 "#;
 
+const ARRAY_VERT_SRC: &str = r#"#version 300 es
+precision highp float;
+uniform vec2 u_resolution;
+layout(location = 0) in vec2 a_pos;
+layout(location = 1) in vec4 a_rect;
+layout(location = 2) in float a_layer;
+out vec2 v_uv;
+out float v_layer;
+void main() {
+    vec2 p = a_rect.xy + a_pos * a_rect.zw;
+    vec2 ndc = vec2(
+        (p.x / u_resolution.x) * 2.0 - 1.0,
+        1.0 - (p.y / u_resolution.y) * 2.0
+    );
+    gl_Position = vec4(ndc, 0.0, 1.0);
+    // UNPACK_FLIP_Y on upload → top of dest uses v=1.
+    v_uv = vec2(a_pos.x, 1.0 - a_pos.y);
+    v_layer = a_layer;
+}
+"#;
+
+const ARRAY_FRAG_SRC: &str = r#"#version 300 es
+precision highp float;
+uniform highp sampler2DArray u_atlas;
+in vec2 v_uv;
+in float v_layer;
+out vec4 frag_color;
+void main() {
+    frag_color = texture(u_atlas, vec3(v_uv, v_layer));
+}
+"#;
+
 /// Draws via WebGL2 into a dedicated canvas (`antialias: false`, transparent).
 pub struct WebGl2Renderer {
     gl: WebGl2RenderingContext,
@@ -89,6 +123,21 @@ pub struct WebGl2Renderer {
     tex_vbo: WebGlBuffer,
     tex_uniform: WebGlUniformLocation,
     tex_resolution_uniform: WebGlUniformLocation,
+    /// Card-poster array path (`draw_images`).
+    array_program: WebGlProgram,
+    array_vao: WebGlVertexArrayObject,
+    array_instance_vbo: WebGlBuffer,
+    array_uniform: WebGlUniformLocation,
+    array_resolution_uniform: WebGlUniformLocation,
+    array_texture: WebGlTexture,
+    /// URL → layer index inside `array_texture`.
+    array_slots: LruCache<String, u32>,
+    /// Unused layer indices (initially `0..IMAGE_TEX_CAP`).
+    free_layers: Vec<u32>,
+    layer_w: i32,
+    layer_h: i32,
+    /// Scratch canvas for resampling sources into `layer_w×layer_h`.
+    layer_scratch: Option<(HtmlCanvasElement, CanvasRenderingContext2d)>,
     textures: LruCache<String, WebGlTexture>,
     /// Cached rasterized system-font text → (texture, width, height).
     text_textures: LruCache<String, (WebGlTexture, i32, i32)>,
@@ -105,7 +154,12 @@ impl WebGl2Renderer {
         width: u32,
         height: u32,
         images: ImageCacheHandle,
+        layer_w: u32,
+        layer_h: u32,
     ) -> Self {
+        let layer_w = layer_w.max(1) as i32;
+        let layer_h = layer_h.max(1) as i32;
+
         let vert = compile_shader(&gl, WebGl2RenderingContext::VERTEX_SHADER, VERT_SRC)
             .unwrap_or_else(|e| wasm_bindgen::throw_str(&e));
         let frag = compile_shader(&gl, WebGl2RenderingContext::FRAGMENT_SHADER, FRAG_SRC)
@@ -159,6 +213,113 @@ impl WebGl2Renderer {
         gl.bind_vertex_array(None);
         gl.bind_buffer(WebGl2RenderingContext::ARRAY_BUFFER, None);
 
+        let array_vert = compile_shader(&gl, WebGl2RenderingContext::VERTEX_SHADER, ARRAY_VERT_SRC)
+            .unwrap_or_else(|e| wasm_bindgen::throw_str(&e));
+        let array_frag =
+            compile_shader(&gl, WebGl2RenderingContext::FRAGMENT_SHADER, ARRAY_FRAG_SRC)
+                .unwrap_or_else(|e| wasm_bindgen::throw_str(&e));
+        let array_program = link_program(&gl, &array_vert, &array_frag)
+            .unwrap_or_else(|e| wasm_bindgen::throw_str(&e));
+        let array_uniform = gl
+            .get_uniform_location(&array_program, "u_atlas")
+            .expect_throw("u_atlas uniform missing");
+        let array_resolution_uniform = gl
+            .get_uniform_location(&array_program, "u_resolution")
+            .expect_throw("u_resolution uniform missing");
+
+        let array_texture = gl
+            .create_texture()
+            .expect_throw("Failed to create array texture");
+        gl.bind_texture(WebGl2RenderingContext::TEXTURE_2D_ARRAY, Some(&array_texture));
+        gl.tex_parameteri(
+            WebGl2RenderingContext::TEXTURE_2D_ARRAY,
+            WebGl2RenderingContext::TEXTURE_WRAP_S,
+            WebGl2RenderingContext::CLAMP_TO_EDGE as i32,
+        );
+        gl.tex_parameteri(
+            WebGl2RenderingContext::TEXTURE_2D_ARRAY,
+            WebGl2RenderingContext::TEXTURE_WRAP_T,
+            WebGl2RenderingContext::CLAMP_TO_EDGE as i32,
+        );
+        gl.tex_parameteri(
+            WebGl2RenderingContext::TEXTURE_2D_ARRAY,
+            WebGl2RenderingContext::TEXTURE_MIN_FILTER,
+            WebGl2RenderingContext::LINEAR as i32,
+        );
+        gl.tex_parameteri(
+            WebGl2RenderingContext::TEXTURE_2D_ARRAY,
+            WebGl2RenderingContext::TEXTURE_MAG_FILTER,
+            WebGl2RenderingContext::LINEAR as i32,
+        );
+        gl.tex_storage_3d(
+            WebGl2RenderingContext::TEXTURE_2D_ARRAY,
+            1,
+            WebGl2RenderingContext::RGBA8,
+            layer_w,
+            layer_h,
+            IMAGE_TEX_CAP as i32,
+        );
+        gl.bind_texture(WebGl2RenderingContext::TEXTURE_2D_ARRAY, None);
+
+        // Unit quad in local 0–1 space (two triangles).
+        let unit_quad: [f32; 12] = [
+            0.0, 0.0, //
+            1.0, 0.0, //
+            0.0, 1.0, //
+            0.0, 1.0, //
+            1.0, 0.0, //
+            1.0, 1.0,
+        ];
+        let array_vao = gl
+            .create_vertex_array()
+            .expect_throw("Failed to create array VAO");
+        let array_quad_vbo = gl
+            .create_buffer()
+            .expect_throw("Failed to create array quad VBO");
+        let array_instance_vbo = gl
+            .create_buffer()
+            .expect_throw("Failed to create array instance VBO");
+        gl.bind_vertex_array(Some(&array_vao));
+        gl.bind_buffer(WebGl2RenderingContext::ARRAY_BUFFER, Some(&array_quad_vbo));
+        let quad_data = Float32Array::new_with_length(unit_quad.len() as u32);
+        quad_data.copy_from(&unit_quad);
+        gl.buffer_data_with_array_buffer_view(
+            WebGl2RenderingContext::ARRAY_BUFFER,
+            &quad_data,
+            WebGl2RenderingContext::STATIC_DRAW,
+        );
+        gl.enable_vertex_attrib_array(0);
+        gl.vertex_attrib_pointer_with_i32(0, 2, WebGl2RenderingContext::FLOAT, false, 0, 0);
+        gl.vertex_attrib_divisor(0, 0);
+
+        gl.bind_buffer(
+            WebGl2RenderingContext::ARRAY_BUFFER,
+            Some(&array_instance_vbo),
+        );
+        let inst_stride = (FLOATS_PER_INSTANCE * 4) as i32;
+        gl.enable_vertex_attrib_array(1);
+        gl.vertex_attrib_pointer_with_i32(
+            1,
+            4,
+            WebGl2RenderingContext::FLOAT,
+            false,
+            inst_stride,
+            0,
+        );
+        gl.vertex_attrib_divisor(1, 1);
+        gl.enable_vertex_attrib_array(2);
+        gl.vertex_attrib_pointer_with_i32(
+            2,
+            1,
+            WebGl2RenderingContext::FLOAT,
+            false,
+            inst_stride,
+            16,
+        );
+        gl.vertex_attrib_divisor(2, 1);
+        gl.bind_vertex_array(None);
+        gl.bind_buffer(WebGl2RenderingContext::ARRAY_BUFFER, None);
+
         gl.viewport(0, 0, width as i32, height as i32);
         gl.disable(WebGl2RenderingContext::DEPTH_TEST);
 
@@ -169,6 +330,9 @@ impl WebGl2Renderer {
         gl.uniform2f(Some(&resolution_uniform), width, height);
         gl.use_program(Some(&tex_program));
         gl.uniform2f(Some(&tex_resolution_uniform), width, height);
+        gl.use_program(Some(&array_program));
+        gl.uniform2f(Some(&array_resolution_uniform), width, height);
+        gl.uniform1i(Some(&array_uniform), 0);
         gl.use_program(None);
 
         Self {
@@ -182,6 +346,17 @@ impl WebGl2Renderer {
             tex_vbo,
             tex_uniform,
             tex_resolution_uniform,
+            array_program,
+            array_vao,
+            array_instance_vbo,
+            array_uniform,
+            array_resolution_uniform,
+            array_texture,
+            array_slots: LruCache::new(NonZeroUsize::new(IMAGE_TEX_CAP).expect("cap > 0")),
+            free_layers: (0..IMAGE_TEX_CAP as u32).collect(),
+            layer_w,
+            layer_h,
+            layer_scratch: None,
             textures: LruCache::new(NonZeroUsize::new(IMAGE_TEX_CAP).expect("cap > 0")),
             text_textures: LruCache::new(NonZeroUsize::new(TEXT_TEX_CAP).expect("cap > 0")),
             images,
@@ -204,6 +379,12 @@ impl WebGl2Renderer {
         self.gl.use_program(Some(&self.tex_program));
         self.gl
             .uniform2f(Some(&self.tex_resolution_uniform), self.width, self.height);
+        self.gl.use_program(Some(&self.array_program));
+        self.gl.uniform2f(
+            Some(&self.array_resolution_uniform),
+            self.width,
+            self.height,
+        );
         self.gl.use_program(None);
     }
 
@@ -372,6 +553,174 @@ impl WebGl2Renderer {
         gl.bind_vertex_array(None);
         gl.bind_texture(WebGl2RenderingContext::TEXTURE_2D, None);
         gl.disable(WebGl2RenderingContext::BLEND);
+    }
+
+    fn ensure_layer_scratch(&mut self) -> bool {
+        if self.layer_scratch.is_some() {
+            return true;
+        }
+        let Some(document) = web_sys::window().and_then(|w| w.document()) else {
+            return false;
+        };
+        let Ok(canvas) = document.create_element("canvas") else {
+            return false;
+        };
+        let Ok(canvas) = canvas.dyn_into::<HtmlCanvasElement>() else {
+            return false;
+        };
+        canvas.set_width(self.layer_w as u32);
+        canvas.set_height(self.layer_h as u32);
+        let Ok(Some(ctx)) = canvas.get_context("2d") else {
+            return false;
+        };
+        let Ok(ctx) = ctx.dyn_into::<CanvasRenderingContext2d>() else {
+            return false;
+        };
+        self.layer_scratch = Some((canvas, ctx));
+        true
+    }
+
+    fn claim_array_layer(&mut self) -> u32 {
+        if let Some(layer) = self.free_layers.pop() {
+            return layer;
+        }
+        self.array_slots
+            .pop_lru()
+            .map(|(_, layer)| layer)
+            .unwrap_or(0)
+    }
+
+    fn upload_array_layer(&mut self, layer: u32, image: &HtmlImageElement) -> bool {
+        if !self.ensure_layer_scratch() {
+            return false;
+        }
+        let layer_w = self.layer_w;
+        let layer_h = self.layer_h;
+        let canvas = {
+            let Some((canvas, ctx)) = self.layer_scratch.as_ref() else {
+                return false;
+            };
+            ctx.clear_rect(0.0, 0.0, f64::from(layer_w), f64::from(layer_h));
+            if ctx
+                .draw_image_with_html_image_element_and_dw_and_dh(
+                    image,
+                    0.0,
+                    0.0,
+                    f64::from(layer_w),
+                    f64::from(layer_h),
+                )
+                .is_err()
+            {
+                return false;
+            }
+            canvas.clone()
+        };
+        let gl = &self.gl;
+        gl.bind_texture(
+            WebGl2RenderingContext::TEXTURE_2D_ARRAY,
+            Some(&self.array_texture),
+        );
+        gl.pixel_storei(WebGl2RenderingContext::UNPACK_FLIP_Y_WEBGL, 1);
+        let ok = gl
+            .tex_sub_image_3d_with_html_canvas_element(
+                WebGl2RenderingContext::TEXTURE_2D_ARRAY,
+                0,
+                0,
+                0,
+                layer as i32,
+                layer_w,
+                layer_h,
+                1,
+                WebGl2RenderingContext::RGBA,
+                WebGl2RenderingContext::UNSIGNED_BYTE,
+                &canvas,
+            )
+            .is_ok();
+        gl.bind_texture(WebGl2RenderingContext::TEXTURE_2D_ARRAY, None);
+        ok
+    }
+
+    /// Resolve `url` to a resident array layer; upload when `allow_upload`.
+    fn array_layer_for(&mut self, url: &str, allow_upload: bool) -> Option<u32> {
+        if let Some(&layer) = self.array_slots.get(url) {
+            ImageCache::touch(&self.images, url);
+            return Some(layer);
+        }
+        if !allow_upload {
+            return None;
+        }
+        let image = ImageCache::html_image(&self.images, url)?;
+        let layer = self.claim_array_layer();
+        if !self.upload_array_layer(layer, &image) {
+            self.free_layers.push(layer);
+            return None;
+        }
+        if let Some(prev) = self.array_slots.put(url.to_string(), layer) {
+            self.free_layers.push(prev);
+        }
+        Some(layer)
+    }
+
+    fn draw_array_instances(&self, instances: &[f32], count: i32) {
+        if count <= 0 {
+            return;
+        }
+        let gl = &self.gl;
+        gl.enable(WebGl2RenderingContext::BLEND);
+        gl.blend_func(
+            WebGl2RenderingContext::SRC_ALPHA,
+            WebGl2RenderingContext::ONE_MINUS_SRC_ALPHA,
+        );
+
+        gl.use_program(Some(&self.array_program));
+        gl.active_texture(WebGl2RenderingContext::TEXTURE0);
+        gl.bind_texture(
+            WebGl2RenderingContext::TEXTURE_2D_ARRAY,
+            Some(&self.array_texture),
+        );
+        gl.uniform1i(Some(&self.array_uniform), 0);
+
+        gl.bind_vertex_array(Some(&self.array_vao));
+        gl.bind_buffer(
+            WebGl2RenderingContext::ARRAY_BUFFER,
+            Some(&self.array_instance_vbo),
+        );
+        let data = Float32Array::new_with_length(instances.len() as u32);
+        data.copy_from(instances);
+        gl.buffer_data_with_array_buffer_view(
+            WebGl2RenderingContext::ARRAY_BUFFER,
+            &data,
+            WebGl2RenderingContext::DYNAMIC_DRAW,
+        );
+        gl.draw_arrays_instanced(WebGl2RenderingContext::TRIANGLES, 0, 6, count);
+
+        gl.bind_vertex_array(None);
+        gl.bind_texture(WebGl2RenderingContext::TEXTURE_2D_ARRAY, None);
+        gl.disable(WebGl2RenderingContext::BLEND);
+    }
+
+    fn draw_images_batch(&mut self, images: &[ImageBlit<'_>], allow_upload: bool) {
+        if images.is_empty() {
+            return;
+        }
+        self.flush_color_batches();
+
+        let mut instances = Vec::with_capacity(images.len() * FLOATS_PER_INSTANCE);
+        for img in images {
+            if img.w <= 0 || img.h <= 0 || img.url.is_empty() {
+                continue;
+            }
+            let Some(layer) = self.array_layer_for(img.url, allow_upload) else {
+                continue;
+            };
+            instances.push(img.x as f32);
+            instances.push(img.y as f32);
+            instances.push(img.w as f32);
+            instances.push(img.h as f32);
+            instances.push(layer as f32);
+        }
+        let count = (instances.len() / FLOATS_PER_INSTANCE) as i32;
+        self.draw_array_instances(&instances, count);
     }
 
     fn text_cache_key(size: i32, color: Color, text: &str) -> String {
@@ -572,6 +921,14 @@ impl Renderer for WebGl2Renderer {
         ImageCache::touch(&self.images, url);
         self.flush_color_batches();
         self.draw_texture_quad(x, y, width, height, &texture);
+    }
+
+    fn draw_images(&mut self, images: &[ImageBlit<'_>]) {
+        self.draw_images_batch(images, true);
+    }
+
+    fn draw_images_cached(&mut self, images: &[ImageBlit<'_>]) {
+        self.draw_images_batch(images, false);
     }
 
     fn prefetch_image(&mut self, url: &str) {

@@ -14,8 +14,9 @@ locals (`crates/tv-app/src/lib.rs`) and builds the `Rect` it passes in. The canv
 store is exactly that size; CSS scales the whole 16:9 stage to
 fit the viewport with black letterboxing (`www/apps/tv-app/src/style.css`). Because both the design
 space and the stage are 16:9, scaling never distorts and no per-frame DPR math is needed.
-`WebGl2Renderer::to_ndc` maps design pixels → clip space `[-1, 1]` with Y flipped
-(design Y grows downward, GL Y grows upward).
+`WebGl2Renderer`'s vertex shaders map design pixels → clip space `[-1, 1]` via a
+`u_resolution` uniform (Y flipped: design Y grows downward, GL Y grows upward).
+VBOs store design-space coordinates; only `resize` needs to update the uniform.
 
 ## The DOM the entry point builds (`setup_app`)
 
@@ -36,15 +37,16 @@ shows through wherever the UI paints nothing (the whole point in `PlayerScreen`)
 
 The backend has **two GL programs**:
 
-1. **Vector program** — flat-coloured geometry. Vertices are `(x, y, r, g, b, a)`
-   (`FLOATS_PER_VERT = 6`). `stroke_line`/`stroke_circle`/`fill_circle`/`fill_triangle`
+1. **Vector program** — flat-coloured geometry. Vertices are design-pixel
+   `(x, y, r, g, b, a)` (`FLOATS_PER_VERT = 6`); the VS maps `xy` to NDC.
+   `stroke_line`/`stroke_circle`/`fill_circle`/`fill_triangle`
    push into one of two CPU-side `Vec<f32>` buffers — `tri_verts` (TRIANGLES) and
    `line_verts` (LINES). Circles are tessellated into `CIRCLE_SEGMENTS = 64` segments.
    `fill_rect`/`stroke_rect` are the trait's default compositions into triangles/lines.
 
-2. **Texture program** — one textured quad at a time. Vertices are `(x, y, u, v)`
-   (`FLOATS_PER_TEX_VERT = 4`). Used for both images and rasterized text. Alpha blending
-   (`SRC_ALPHA, ONE_MINUS_SRC_ALPHA`) is enabled only around textured draws.
+2. **Texture program** — one textured quad at a time. Vertices are design-pixel
+   `(x, y, u, v)` (`FLOATS_PER_TEX_VERT = 4`). Used for both images and rasterized text.
+   Alpha blending (`SRC_ALPHA, ONE_MINUS_SRC_ALPHA`) is enabled only around textured draws.
 
 ### Batching and flush order
 

@@ -27,11 +27,17 @@ const TEXT_TEX_CAP: usize = 192;
 
 const VERT_SRC: &str = r#"#version 300 es
 precision highp float;
+uniform vec2 u_resolution;
 layout(location = 0) in vec2 a_pos;
 layout(location = 1) in vec4 a_color;
 out vec4 v_color;
 void main() {
-    gl_Position = vec4(a_pos, 0.0, 1.0);
+    // Design pixels → NDC; Y flipped (design Y down, clip Y up).
+    vec2 ndc = vec2(
+        (a_pos.x / u_resolution.x) * 2.0 - 1.0,
+        1.0 - (a_pos.y / u_resolution.y) * 2.0
+    );
+    gl_Position = vec4(ndc, 0.0, 1.0);
     v_color = a_color;
 }
 "#;
@@ -47,11 +53,16 @@ void main() {
 
 const TEX_VERT_SRC: &str = r#"#version 300 es
 precision highp float;
+uniform vec2 u_resolution;
 layout(location = 0) in vec2 a_pos;
 layout(location = 1) in vec2 a_uv;
 out vec2 v_uv;
 void main() {
-    gl_Position = vec4(a_pos, 0.0, 1.0);
+    vec2 ndc = vec2(
+        (a_pos.x / u_resolution.x) * 2.0 - 1.0,
+        1.0 - (a_pos.y / u_resolution.y) * 2.0
+    );
+    gl_Position = vec4(ndc, 0.0, 1.0);
     v_uv = a_uv;
 }
 "#;
@@ -72,10 +83,12 @@ pub struct WebGl2Renderer {
     program: WebGlProgram,
     vao: WebGlVertexArrayObject,
     vbo: WebGlBuffer,
+    resolution_uniform: WebGlUniformLocation,
     tex_program: WebGlProgram,
     tex_vao: WebGlVertexArrayObject,
     tex_vbo: WebGlBuffer,
     tex_uniform: WebGlUniformLocation,
+    tex_resolution_uniform: WebGlUniformLocation,
     textures: LruCache<String, WebGlTexture>,
     /// Cached rasterized system-font text → (texture, width, height).
     text_textures: LruCache<String, (WebGlTexture, i32, i32)>,
@@ -99,6 +112,9 @@ impl WebGl2Renderer {
             .unwrap_or_else(|e| wasm_bindgen::throw_str(&e));
         let program =
             link_program(&gl, &vert, &frag).unwrap_or_else(|e| wasm_bindgen::throw_str(&e));
+        let resolution_uniform = gl
+            .get_uniform_location(&program, "u_resolution")
+            .expect_throw("u_resolution uniform missing");
 
         let vao = gl
             .create_vertex_array()
@@ -123,6 +139,9 @@ impl WebGl2Renderer {
         let tex_uniform = gl
             .get_uniform_location(&tex_program, "u_tex")
             .expect_throw("u_tex uniform missing");
+        let tex_resolution_uniform = gl
+            .get_uniform_location(&tex_program, "u_resolution")
+            .expect_throw("u_resolution uniform missing");
 
         let tex_vao = gl
             .create_vertex_array()
@@ -143,20 +162,31 @@ impl WebGl2Renderer {
         gl.viewport(0, 0, width as i32, height as i32);
         gl.disable(WebGl2RenderingContext::DEPTH_TEST);
 
+        let width = width as f32;
+        let height = height as f32;
+        // Uniforms stick to their program; set once here and again on resize.
+        gl.use_program(Some(&program));
+        gl.uniform2f(Some(&resolution_uniform), width, height);
+        gl.use_program(Some(&tex_program));
+        gl.uniform2f(Some(&tex_resolution_uniform), width, height);
+        gl.use_program(None);
+
         Self {
             gl,
             program,
             vao,
             vbo,
+            resolution_uniform,
             tex_program,
             tex_vao,
             tex_vbo,
             tex_uniform,
+            tex_resolution_uniform,
             textures: LruCache::new(NonZeroUsize::new(IMAGE_TEX_CAP).expect("cap > 0")),
             text_textures: LruCache::new(NonZeroUsize::new(TEXT_TEX_CAP).expect("cap > 0")),
             images,
-            width: width as f32,
-            height: height as f32,
+            width,
+            height,
             line_verts: Vec::new(),
             tri_verts: Vec::new(),
         }
@@ -168,12 +198,13 @@ impl WebGl2Renderer {
         self.width = width as f32;
         self.height = height as f32;
         self.gl.viewport(0, 0, width as i32, height as i32);
-    }
-
-    fn to_ndc(&self, x: i32, y: i32) -> (f32, f32) {
-        let nx = (x as f32 / self.width) * 2.0 - 1.0;
-        let ny = 1.0 - (y as f32 / self.height) * 2.0;
-        (nx, ny)
+        self.gl.use_program(Some(&self.program));
+        self.gl
+            .uniform2f(Some(&self.resolution_uniform), self.width, self.height);
+        self.gl.use_program(Some(&self.tex_program));
+        self.gl
+            .uniform2f(Some(&self.tex_resolution_uniform), self.width, self.height);
+        self.gl.use_program(None);
     }
 
     fn push_vert(buf: &mut Vec<f32>, x: f32, y: f32, color: Color) {
@@ -186,19 +217,14 @@ impl WebGl2Renderer {
     }
 
     fn push_line(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, color: Color) {
-        let (ax, ay) = self.to_ndc(x0, y0);
-        let (bx, by) = self.to_ndc(x1, y1);
-        Self::push_vert(&mut self.line_verts, ax, ay, color);
-        Self::push_vert(&mut self.line_verts, bx, by, color);
+        Self::push_vert(&mut self.line_verts, x0 as f32, y0 as f32, color);
+        Self::push_vert(&mut self.line_verts, x1 as f32, y1 as f32, color);
     }
 
     fn push_tri(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, x2: i32, y2: i32, color: Color) {
-        let (ax, ay) = self.to_ndc(x0, y0);
-        let (bx, by) = self.to_ndc(x1, y1);
-        let (cx, cy) = self.to_ndc(x2, y2);
-        Self::push_vert(&mut self.tri_verts, ax, ay, color);
-        Self::push_vert(&mut self.tri_verts, bx, by, color);
-        Self::push_vert(&mut self.tri_verts, cx, cy, color);
+        Self::push_vert(&mut self.tri_verts, x0 as f32, y0 as f32, color);
+        Self::push_vert(&mut self.tri_verts, x1 as f32, y1 as f32, color);
+        Self::push_vert(&mut self.tri_verts, x2 as f32, y2 as f32, color);
     }
 
     fn flush_color_batches(&mut self) {
@@ -304,9 +330,12 @@ impl WebGl2Renderer {
     }
 
     fn draw_texture_quad(&self, x: i32, y: i32, w: i32, h: i32, texture: &WebGlTexture) {
-        let (x0, y0) = self.to_ndc(x, y);
-        let (x1, y1) = self.to_ndc(x + w, y + h);
+        let x0 = x as f32;
+        let y0 = y as f32;
+        let x1 = (x + w) as f32;
+        let y1 = (y + h) as f32;
         // Two triangles; UVs with v=0 at bottom after UNPACK_FLIP_Y.
+        // Positions are design pixels; the VS maps them to NDC.
         let verts: [f32; 24] = [
             x0, y0, 0.0, 1.0, //
             x1, y0, 1.0, 1.0, //

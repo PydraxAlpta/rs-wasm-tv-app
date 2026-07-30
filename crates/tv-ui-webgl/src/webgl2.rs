@@ -24,6 +24,10 @@ const FLOATS_PER_INSTANCE: usize = 5; // x, y, w, h, layer
 /// (`super::image_cache::IMAGE_CACHE_CAP`) — VRAM is the scarce resource on a TV.
 /// Also the depth of the card `TEXTURE_2D_ARRAY`.
 const IMAGE_TEX_CAP: usize = 96;
+/// Max new GPU image uploads (`texSubImage3D` / `texImage2D`) per frame.
+/// Prefetch may decode many posters at once; amortizing uploads avoids TV hitches
+/// while still letting horizontal browse reveal images over subsequent frames.
+const IMAGE_UPLOADS_PER_FRAME: u32 = 2;
 /// Titles / metadata strings churn as focus moves; keep a larger text budget.
 const TEXT_TEX_CAP: usize = 192;
 
@@ -146,6 +150,8 @@ pub struct WebGl2Renderer {
     height: f32,
     line_verts: Vec<f32>,
     tri_verts: Vec<f32>,
+    /// Remaining new texture uploads allowed this frame (reset in `begin_frame`).
+    uploads_remaining: u32,
 }
 
 impl WebGl2Renderer {
@@ -364,6 +370,7 @@ impl WebGl2Renderer {
             height,
             line_verts: Vec::new(),
             tri_verts: Vec::new(),
+            uploads_remaining: IMAGE_UPLOADS_PER_FRAME,
         }
     }
 
@@ -443,6 +450,9 @@ impl WebGl2Renderer {
         if let Some(texture) = self.textures.get(url) {
             return Some(texture.clone());
         }
+        if self.uploads_remaining == 0 {
+            return None;
+        }
 
         let gl = &self.gl;
         let texture = gl.create_texture()?;
@@ -485,6 +495,7 @@ impl WebGl2Renderer {
         }
 
         gl.bind_texture(WebGl2RenderingContext::TEXTURE_2D, None);
+        self.uploads_remaining -= 1;
         if let Some(evicted) = self.textures.put(url.to_string(), texture.clone()) {
             self.gl.delete_texture(Some(&evicted));
         }
@@ -591,12 +602,17 @@ impl WebGl2Renderer {
     }
 
     fn upload_array_layer(&mut self, layer: u32, image: &HtmlImageElement) -> bool {
-        if !self.ensure_layer_scratch() {
-            return false;
-        }
         let layer_w = self.layer_w;
         let layer_h = self.layer_h;
-        let canvas = {
+        let exact = image.natural_width() == layer_w as u32
+            && image.natural_height() == layer_h as u32;
+
+        let scratch = if exact {
+            None
+        } else {
+            if !self.ensure_layer_scratch() {
+                return false;
+            }
             let Some((canvas, ctx)) = self.layer_scratch.as_ref() else {
                 return false;
             };
@@ -613,16 +629,18 @@ impl WebGl2Renderer {
             {
                 return false;
             }
-            canvas.clone()
+            Some(canvas.clone())
         };
+
         let gl = &self.gl;
         gl.bind_texture(
             WebGl2RenderingContext::TEXTURE_2D_ARRAY,
             Some(&self.array_texture),
         );
         gl.pixel_storei(WebGl2RenderingContext::UNPACK_FLIP_Y_WEBGL, 1);
-        let ok = gl
-            .tex_sub_image_3d_with_html_canvas_element(
+
+        let ok = if let Some(canvas) = scratch.as_ref() {
+            gl.tex_sub_image_3d_with_html_canvas_element(
                 WebGl2RenderingContext::TEXTURE_2D_ARRAY,
                 0,
                 0,
@@ -633,9 +651,26 @@ impl WebGl2Renderer {
                 1,
                 WebGl2RenderingContext::RGBA,
                 WebGl2RenderingContext::UNSIGNED_BYTE,
-                &canvas,
+                canvas,
             )
-            .is_ok();
+            .is_ok()
+        } else {
+            gl.tex_sub_image_3d_with_html_image_element(
+                WebGl2RenderingContext::TEXTURE_2D_ARRAY,
+                0,
+                0,
+                0,
+                layer as i32,
+                layer_w,
+                layer_h,
+                1,
+                WebGl2RenderingContext::RGBA,
+                WebGl2RenderingContext::UNSIGNED_BYTE,
+                image,
+            )
+            .is_ok()
+        };
+
         gl.bind_texture(WebGl2RenderingContext::TEXTURE_2D_ARRAY, None);
         ok
     }
@@ -646,7 +681,7 @@ impl WebGl2Renderer {
             ImageCache::touch(&self.images, url);
             return Some(layer);
         }
-        if !allow_upload {
+        if !allow_upload || self.uploads_remaining == 0 {
             return None;
         }
         let image = ImageCache::html_image(&self.images, url)?;
@@ -655,6 +690,7 @@ impl WebGl2Renderer {
             self.free_layers.push(layer);
             return None;
         }
+        self.uploads_remaining -= 1;
         if let Some(prev) = self.array_slots.put(url.to_string(), layer) {
             self.free_layers.push(prev);
         }
@@ -826,6 +862,7 @@ impl Renderer for WebGl2Renderer {
     fn begin_frame(&mut self, clear: Color) {
         self.line_verts.clear();
         self.tri_verts.clear();
+        self.uploads_remaining = IMAGE_UPLOADS_PER_FRAME;
         self.gl.disable(WebGl2RenderingContext::SCISSOR_TEST);
         self.gl.clear_color(
             f32::from(clear.r) / 255.0,

@@ -97,18 +97,22 @@ For that to pay off, the GPU and decode LRUs must stay coherent. Hot draw paths 
 (`texture_for`, with `UNPACK_FLIP_Y` so UVs match the design-space orientation).
 The array path resamples through a scratch canvas into the fixed layer size the same way.
 
-### Avoiding decode hitches during motion
+### Avoiding decode / upload hitches
 
-Uploading a freshly-decoded poster mid-scroll causes a frame hitch. So during rail motion
-`RailList`:
+Uploading many freshly-decoded posters in one frame causes a hitch on TV GPUs.
+Mitigations:
 
-- calls `prefetch_image` on nearby posters (kicks off the async decode without drawing), and
-- draws with `draw_images_cached` — which paints **only** array layers already resident
-  and skips everything else.
+- **Vertical rail motion:** `RailList` uses `draw_images_cached` — paint only array
+  layers already resident; prefetch still decodes in the background.
+- **Per-frame upload budget:** `WebGl2Renderer` allows at most
+  `IMAGE_UPLOADS_PER_FRAME` (2) new GPU uploads per `begin_frame`, shared by the
+  array and 2D image paths. Horizontal browse keeps `draw_images` (`All`) so
+  posters appear as they decode, but sprawl across frames instead of one spike.
+- Exact-size sources skip the scratch-canvas resample on array upload.
 
-Once `anim_rail.is_settled()`, it switches back to full `draw_images` (`ImageDraw::All` vs
-`CachedOnly` in `carousel.rs`). The banner similarly guards its slides via
-`draw_image_cached`.
+Once `anim_rail.is_settled()`, full `draw_images` is used (`ImageDraw::All` vs
+`CachedOnly` in `carousel.rs`). The banner similarly guards slides via
+`draw_image_cached` during its motion.
 
 ## Text: rasterize on a 2D canvas, cache, upload
 

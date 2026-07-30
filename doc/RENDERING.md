@@ -8,8 +8,10 @@ the `<video>` underlay.
 
 ## Design space & the letterboxed stage
 
-All UI geometry is in a fixed **1920×1080 design space** (`DESIGN_WIDTH`/`DESIGN_HEIGHT` in
-`crates/tv-ui/src/lib.rs`). The canvas backing store is exactly that size; CSS scales the whole 16:9 stage to
+All UI geometry is in a fixed **1920×1080 design space**, expressed as a `Rect` on `Ctx.design`
+rather than a `tv-ui`-owned constant — each app defines its own `DESIGN_WIDTH`/`DESIGN_HEIGHT`
+locals (`crates/tv-app/src/lib.rs`) and builds the `Rect` it passes in. The canvas backing
+store is exactly that size; CSS scales the whole 16:9 stage to
 fit the viewport with black letterboxing (`www/apps/tv-app/src/style.css`). Because both the design
 space and the stage are 16:9, scaling never distorts and no per-frame DPR math is needed.
 `WebGl2Renderer::to_ndc` maps design pixels → clip space `[-1, 1]` with Y flipped

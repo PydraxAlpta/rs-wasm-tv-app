@@ -1,7 +1,5 @@
 //! Basic geometry for layout and painting in design-space coordinates.
 
-use crate::{DESIGN_HEIGHT, DESIGN_WIDTH};
-
 /// Axis-aligned rectangle in design pixels.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Rect {
@@ -18,10 +16,6 @@ impl Rect {
 
     pub fn from_size(size: Size) -> Self {
         Self::new(0.0, 0.0, size.w, size.h)
-    }
-
-    pub fn design() -> Self {
-        Self::new(0.0, 0.0, DESIGN_WIDTH as f32, DESIGN_HEIGHT as f32)
     }
 
     pub fn size(self) -> Size {
@@ -81,10 +75,6 @@ pub struct Size {
 impl Size {
     pub const fn new(w: f32, h: f32) -> Self {
         Self { w, h }
-    }
-
-    pub fn design() -> Self {
-        Self::new(DESIGN_WIDTH as f32, DESIGN_HEIGHT as f32)
     }
 }
 

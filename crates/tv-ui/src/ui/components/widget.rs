@@ -58,14 +58,9 @@ pub trait Widget {
 }
 
 /// Run a layout → update → render pass for a screen-rooted widget tree.
-pub fn tick_widget(
-    root: &mut dyn Widget,
-    design: Rect,
-    dt: f32,
-    r: &mut dyn Renderer,
-    ctx: &mut Ctx,
-) {
-    root.layout(design);
+/// `ctx.design` supplies the root's bounds.
+pub fn tick_widget(root: &mut dyn Widget, dt: f32, r: &mut dyn Renderer, ctx: &mut Ctx) {
+    root.layout(ctx.design);
     root.update(dt, ctx);
     root.render(r, ctx);
 }

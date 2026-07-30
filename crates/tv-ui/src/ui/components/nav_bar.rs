@@ -1,4 +1,6 @@
-//! Top navigation bar: brand + Home / Movies / Shows with animated underline.
+//! Top navigation bar: brand + tabs with an animated underline. Both the
+//! brand string and the tab labels are supplied by the caller — this widget
+//! has no opinion on what a TV app's tabs should be called.
 
 use crate::anim::Tween;
 use crate::geom::Rect;
@@ -8,74 +10,54 @@ use crate::theme;
 use crate::ui::components::carousel::NAV_TAU;
 use crate::ui::components::widget::{Flex, FocusResult, Widget};
 
-pub const TAB_COUNT: usize = 3;
 const LABEL_SIZE: f32 = 28.0;
 /// Fixed hit/layout width for every tab label (underline matches this).
 const TAB_W: f32 = 120.0;
 const TAB_GAP: f32 = 16.0;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Tab {
-    Home = 0,
-    Movies = 1,
-    Shows = 2,
-}
-
-impl Tab {
-    pub fn from_index(i: usize) -> Self {
-        match i {
-            1 => Tab::Movies,
-            2 => Tab::Shows,
-            _ => Tab::Home,
-        }
-    }
-
-    pub fn index(self) -> usize {
-        self as usize
-    }
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Tab::Home => "Home",
-            Tab::Movies => "Movies",
-            Tab::Shows => "Shows",
-        }
-    }
-
-    pub fn all() -> [Tab; TAB_COUNT] {
-        [Tab::Home, Tab::Movies, Tab::Shows]
-    }
-}
-
 pub struct NavBar {
     height: f32,
-    selected: Tab,
+    brand: String,
+    labels: Vec<String>,
+    selected: usize,
     /// Underline center X (design space), animated toward the selected tab.
     selector_x: Tween,
     selector_w: Tween,
     focused: bool,
     bounds: Rect,
-    tab_rects: [Rect; TAB_COUNT],
+    tab_rects: Vec<Rect>,
 }
 
 impl NavBar {
-    pub fn new(height: f32) -> Self {
+    pub fn new(brand: String, labels: Vec<String>) -> Self {
+        let tab_rects = vec![Rect::new(0.0, 0.0, 0.0, 0.0); labels.len()];
         let mut bar = Self {
-            height,
-            selected: Tab::Home,
+            // Immediately overwritten every frame by the shell's `set_height`
+            // — no real value is known at construction.
+            height: 0.0,
+            brand,
+            labels,
+            selected: 0,
             selector_x: Tween::new(0.0, NAV_TAU),
             selector_w: Tween::new(TAB_W, NAV_TAU),
             focused: false,
             bounds: Rect::new(0.0, 0.0, 0.0, 0.0),
-            tab_rects: [Rect::new(0.0, 0.0, 0.0, 0.0); TAB_COUNT],
+            tab_rects,
         };
-        bar.layout_tabs(crate::DESIGN_WIDTH as f32);
+        // `_total_w` is unused by `layout_tabs` today (tabs are laid out from
+        // a fixed left margin, not the total width); a real bounds value
+        // arrives via the first `Widget::layout` call regardless.
+        bar.layout_tabs(0.0);
         bar.snap_selector_to_selected();
         bar
     }
 
-    pub fn selected(&self) -> Tab {
+    pub fn selected(&self) -> usize {
         self.selected
+    }
+
+    pub fn tab_count(&self) -> usize {
+        self.labels.len()
     }
 
     pub fn focused(&self) -> bool {
@@ -90,9 +72,9 @@ impl NavBar {
         self.height = height;
     }
 
-    pub fn select(&mut self, tab: Tab) {
-        if self.selected != tab {
-            self.selected = tab;
+    pub fn select(&mut self, index: usize) {
+        if index < self.labels.len() && self.selected != index {
+            self.selected = index;
             self.animate_selector_to_selected();
         }
     }
@@ -110,20 +92,24 @@ impl NavBar {
     }
 
     /// Underline center X (tab slot center) and fixed width.
-    fn selector_metrics(&self, tab: Tab) -> (f32, f32) {
-        let rect = self.tab_rects[tab.index()];
+    fn selector_metrics(&self, index: usize) -> (f32, f32) {
+        let rect = self
+            .tab_rects
+            .get(index)
+            .copied()
+            .unwrap_or(Rect::new(0.0, 0.0, 0.0, 0.0));
         (rect.x + rect.w * 0.5, TAB_W)
     }
 
     fn layout_tabs(&mut self, _total_w: f32) {
         let margin = 64.0;
-        // Brand "WASM TV" at 48px ≈ 250px; park tabs just to its right.
+        // Brand text at 48px is roughly this wide; park tabs just to its right.
         let brand_w = 260.0;
         let mut x = margin + brand_w;
         let y = self.bounds.y;
         let h = self.height;
-        for i in 0..TAB_COUNT {
-            self.tab_rects[i] = Rect::new(x, y, TAB_W, h);
+        for rect in self.tab_rects.iter_mut() {
+            *rect = Rect::new(x, y, TAB_W, h);
             x += TAB_W + TAB_GAP;
         }
     }
@@ -138,7 +124,7 @@ impl Widget for NavBar {
         let width_changed = (self.bounds.w - bounds.w).abs() > 0.5;
         self.bounds = bounds;
         self.layout_tabs(bounds.w);
-        if width_changed || self.selector_x.target() == 0.0 && self.selected == Tab::Home {
+        if width_changed || self.selector_x.target() == 0.0 && self.selected == 0 {
             self.animate_selector_to_selected();
         }
     }
@@ -159,13 +145,13 @@ impl Widget for NavBar {
             title_y as i32,
             48,
             theme::HEADER,
-            "WASM TV",
+            &self.brand,
         );
 
         let label_y = title_y + 10.0;
-        for tab in Tab::all() {
-            let rect = self.tab_rects[tab.index()];
-            let selected = tab == self.selected;
+        for (i, label) in self.labels.iter().enumerate() {
+            let rect = self.tab_rects[i];
+            let selected = i == self.selected;
             let color = if self.focused && selected {
                 theme::FOCUS
             } else if selected {
@@ -173,7 +159,6 @@ impl Widget for NavBar {
             } else {
                 theme::TEXT_DIM
             };
-            let label = tab.label();
             r.draw_text(
                 rect.x as i32,
                 label_y as i32,
@@ -202,16 +187,14 @@ impl Widget for NavBar {
         }
         match key {
             Key::Left => {
-                let i = self.selected.index();
-                if i > 0 {
-                    self.select(Tab::from_index(i - 1));
+                if self.selected > 0 {
+                    self.select(self.selected - 1);
                 }
                 FocusResult::Handled
             }
             Key::Right => {
-                let i = self.selected.index();
-                if i + 1 < TAB_COUNT {
-                    self.select(Tab::from_index(i + 1));
+                if self.selected + 1 < self.labels.len() {
+                    self.select(self.selected + 1);
                 }
                 FocusResult::Handled
             }
@@ -223,17 +206,5 @@ impl Widget for NavBar {
 
     fn bounds(&self) -> Rect {
         self.bounds
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn tab_indices_round_trip() {
-        for t in Tab::all() {
-            assert_eq!(Tab::from_index(t.index()), t);
-        }
     }
 }

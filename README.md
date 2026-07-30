@@ -69,8 +69,9 @@ The UI is a retained-mode **widget tree** (`crates/tv-ui/src/ui/components/` + `
 `Flex` layout system. The leanback navigation is a fixed focus-anchor / moving-content
 model: the focus ring stays at a fixed screen position while the content grid slides behind
 it, with animated fractional indices smoothed by `Tween` (`crates/tv-ui/src/anim.rs`). Card/spacing
-geometry lives in `Metrics::tv()` (`crates/tv-ui/src/metrics.rs`) — `Metrics` has no hardcoded
-design resolution, so `tv-ui-web` builds its own smaller instance for its embedded canvas.
+geometry lives in `Metrics::default()` (`crates/tv-ui/src/metrics.rs`) — `Metrics` has no
+hardcoded design resolution, so `tv-ui-web` builds its own smaller instance (`embed_metrics()`)
+for its embedded canvas by overriding every field.
 See [`doc/`](doc/) for the full write-up.
 
 ## Layout
@@ -79,7 +80,7 @@ See [`doc/`](doc/) for the full write-up.
 |------|------|
 | `crates/tv-ui/src/model.rs` | Content model (`Card` / `Rail` / `BannerSlide` / `Catalog`); add content here |
 | `crates/tv-ui/src/geom.rs` | Pure geometry: `Rect` / `Size` / `Insets` |
-| `crates/tv-ui/src/metrics.rs` | Card sizes, spacing, band heights (`Metrics::tv()`; `Layout` is an alias) |
+| `crates/tv-ui/src/metrics.rs` | Card sizes, spacing, band heights, fonts (`Metrics::default()`; `Layout` is an alias) |
 | `crates/tv-ui/src/anim.rs` | `Tween` — frame-rate-independent exponential smoothing |
 | `crates/tv-ui/src/screen.rs` | Navigation core: `Screen`, `Transition`, `VideoSink`, `NullVideoSink`, `Ctx`, `Key` |
 | `crates/tv-ui/src/renderer.rs` | The `Renderer` draw-primitive trait |

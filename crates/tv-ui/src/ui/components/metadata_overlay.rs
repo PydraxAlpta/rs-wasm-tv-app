@@ -20,6 +20,8 @@ const PLAY_BTN_H: f32 = 72.0;
 /// Payload shown in the overlay (title + art + catalog indices for filler copy).
 #[derive(Debug, Clone)]
 pub struct MetadataItem {
+    /// The card's id, if this item came from a card (banners have none).
+    pub id: Option<u32>,
     pub title: String,
     pub image_url: String,
     pub rail_index: usize,
@@ -69,13 +71,14 @@ impl MetadataOverlay {
     }
 
     /// Page rect translated up from below as `slide` goes 0 → 1.
-    /// Uses [`layout`](Widget::layout) bounds so the overlay tracks a sliding tab page.
-    fn page_rect(&self) -> Rect {
+    /// Uses [`layout`](Widget::layout) bounds so the overlay tracks a sliding
+    /// tab page; falls back to `design` before the first real `layout` call.
+    fn page_rect(&self, design: Rect) -> Rect {
         let t = self.slide.value().clamp(0.0, 1.0);
         let full = if self.bounds.w > 1.0 {
             self.bounds
         } else {
-            Rect::design()
+            design
         };
         Rect::new(full.x, full.y + full.h * (1.0 - t), full.w, full.h)
     }
@@ -119,7 +122,7 @@ impl Widget for MetadataOverlay {
             return;
         }
 
-        let page = self.page_rect();
+        let page = self.page_rect(ctx.design);
         let (px, py, pw, ph) = page.as_i32();
         r.fill_rect(px, py, pw, ph, theme::BG);
 
@@ -304,6 +307,7 @@ mod tests {
     fn open_sets_slide_target() {
         let mut o = MetadataOverlay::new();
         o.open(MetadataItem {
+            id: None,
             title: "T".into(),
             image_url: "u".into(),
             rail_index: 2,
@@ -319,6 +323,7 @@ mod tests {
     fn close_animates_toward_zero() {
         let mut o = MetadataOverlay::new();
         o.open(MetadataItem {
+            id: None,
             title: "T".into(),
             image_url: "u".into(),
             rail_index: 0,
@@ -332,24 +337,22 @@ mod tests {
     #[test]
     fn page_covers_content_below_header_when_open() {
         let header_h = 140.0;
+        let design_w = 1920.0;
+        let design_h = 1080.0;
         let mut o = MetadataOverlay::new();
-        o.layout(Rect::new(
-            0.0,
-            header_h,
-            crate::DESIGN_WIDTH as f32,
-            crate::DESIGN_HEIGHT as f32 - header_h,
-        ));
+        o.layout(Rect::new(0.0, header_h, design_w, design_h - header_h));
         o.open(MetadataItem {
+            id: None,
             title: "T".into(),
             image_url: "u".into(),
             rail_index: 0,
             card_index: 0,
         });
         o.slide.snap(1.0);
-        let page = o.page_rect();
+        let page = o.page_rect(Rect::new(0.0, 0.0, design_w, design_h));
         assert!((page.x - 0.0).abs() < 1e-3);
         assert!((page.y - header_h).abs() < 1e-3);
-        assert!((page.w - crate::DESIGN_WIDTH as f32).abs() < 1e-3);
-        assert!((page.h - (crate::DESIGN_HEIGHT as f32 - header_h)).abs() < 1e-3);
+        assert!((page.w - design_w).abs() < 1e-3);
+        assert!((page.h - (design_h - header_h)).abs() < 1e-3);
     }
 }

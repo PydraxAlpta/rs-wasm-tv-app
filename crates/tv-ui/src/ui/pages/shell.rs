@@ -5,10 +5,9 @@ use crate::geom::Rect;
 use crate::renderer::Renderer;
 use crate::screen::{Ctx, Key, Screen, Transition};
 use crate::theme;
-use crate::ui::components::nav_bar::{NavBar, Tab, TAB_COUNT};
+use crate::ui::components::nav_bar::NavBar;
 use crate::ui::components::widget::{FocusResult, Widget};
 use crate::ui::pages::catalog::{CatalogPage, PageKeyResult};
-use crate::{DESIGN_HEIGHT, DESIGN_WIDTH};
 
 const SLIDE_TAU: f32 = 0.18;
 
@@ -18,35 +17,38 @@ enum ShellFocus {
     Content,
 }
 
-/// App root: Home / Movies / Shows behind a shared nav bar.
+/// App root: a caller-supplied set of tabs behind a shared nav bar. The
+/// first tab loads eagerly; the rest lazily, on first visit.
 pub struct MainShell {
     nav: NavBar,
-    pages: [Option<CatalogPage>; TAB_COUNT],
+    pages: Vec<Option<CatalogPage>>,
     /// Fractional tab index for the sliding content strip.
     slide: Tween,
     focus: ShellFocus,
 }
 
 impl MainShell {
-    pub fn new() -> Self {
-        let mut pages: [Option<CatalogPage>; TAB_COUNT] = [None, None, None];
-        pages[Tab::Home.index()] = Some(CatalogPage::new());
+    pub fn new(brand: String, tab_labels: Vec<String>) -> Self {
+        let mut pages: Vec<Option<CatalogPage>> = (0..tab_labels.len()).map(|_| None).collect();
+        if !pages.is_empty() {
+            pages[0] = Some(CatalogPage::new());
+        }
         let mut shell = Self {
-            nav: NavBar::new(140.0),
+            nav: NavBar::new(brand, tab_labels),
             pages,
-            slide: Tween::new(Tab::Home.index() as f32, SLIDE_TAU),
+            slide: Tween::new(0.0, SLIDE_TAU),
             focus: ShellFocus::Content,
         };
         shell.sync_focus_flags();
         shell
     }
 
-    pub fn selected_tab(&self) -> Tab {
+    pub fn selected_tab(&self) -> usize {
         self.nav.selected()
     }
 
-    pub fn page_loaded(&self, tab: Tab) -> bool {
-        self.pages[tab.index()].is_some()
+    pub fn page_loaded(&self, index: usize) -> bool {
+        self.pages.get(index).is_some_and(Option::is_some)
     }
 
     pub fn slide_target(&self) -> f32 {
@@ -57,22 +59,23 @@ impl MainShell {
         self.focus == ShellFocus::Nav
     }
 
-    fn ensure_page(&mut self, tab: Tab) {
-        let i = tab.index();
-        if self.pages[i].is_none() {
-            self.pages[i] = Some(CatalogPage::new());
+    fn ensure_page(&mut self, index: usize) {
+        if let Some(slot) = self.pages.get_mut(index) {
+            if slot.is_none() {
+                *slot = Some(CatalogPage::new());
+            }
         }
     }
 
     fn active_page_mut(&mut self) -> Option<&mut CatalogPage> {
-        let i = self.nav.selected().index();
-        self.pages[i].as_mut()
+        let i = self.nav.selected();
+        self.pages.get_mut(i).and_then(Option::as_mut)
     }
 
     fn sync_focus_flags(&mut self) {
         let nav_on = self.focus == ShellFocus::Nav;
         self.nav.set_focused(nav_on);
-        let selected = self.nav.selected().index();
+        let selected = self.nav.selected();
         for (i, page) in self.pages.iter_mut().enumerate() {
             if let Some(p) = page {
                 p.set_content_focused(!nav_on && i == selected);
@@ -83,24 +86,18 @@ impl MainShell {
     fn layout_all(&mut self, ctx: &Ctx) {
         let m = ctx.metrics;
         self.nav.set_height(m.header_h);
-        let full = Rect::design();
+        let full = ctx.design;
         self.nav
             .layout(Rect::new(0.0, 0.0, full.w, m.header_h));
 
         let slide = self.slide.value();
-        let w = DESIGN_WIDTH as f32;
-        for i in 0..TAB_COUNT {
-            if let Some(page) = self.pages[i].as_mut() {
+        let w = ctx.design.w;
+        for (i, page) in self.pages.iter_mut().enumerate() {
+            if let Some(page) = page.as_mut() {
                 let page_x = (i as f32 - slide) * w;
                 page.layout_in_strip(ctx, page_x, m.header_h);
             }
         }
-    }
-}
-
-impl Default for MainShell {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -120,8 +117,8 @@ impl Screen for MainShell {
 
         // Hold-Up from content (banner dwell) → nav.
         if self.focus == ShellFocus::Content {
-            let selected = self.nav.selected().index();
-            if let Some(page) = self.pages[selected].as_mut() {
+            let selected = self.nav.selected();
+            if let Some(Some(page)) = self.pages.get_mut(selected) {
                 if matches!(page.take_pending_move_out(), Some(Key::Up)) {
                     self.focus = ShellFocus::Nav;
                 }
@@ -149,7 +146,7 @@ impl Screen for MainShell {
                 let after = self.nav.selected();
                 if after != before {
                     self.ensure_page(after);
-                    self.slide.set_target(after.index() as f32);
+                    self.slide.set_target(after as f32);
                 }
                 if matches!(result, FocusResult::MoveOut(Key::Down)) {
                     self.focus = ShellFocus::Content;
@@ -218,15 +215,15 @@ impl Screen for MainShell {
 
     fn render(&mut self, r: &mut dyn Renderer, ctx: &mut Ctx) {
         r.fill_rect(
-            0,
-            0,
-            DESIGN_WIDTH as i32,
-            DESIGN_HEIGHT as i32,
+            ctx.design.x as i32,
+            ctx.design.y as i32,
+            ctx.design.w as i32,
+            ctx.design.h as i32,
             theme::BG,
         );
         self.layout_all(ctx);
 
-        let view = Rect::design();
+        let view = ctx.design;
         for page in self.pages.iter().flatten() {
             // Clip each strip so banner/rails never bleed into the neighbour page
             // (or off the screen) while sliding.
@@ -246,7 +243,6 @@ impl Screen for MainShell {
 mod tests {
     use super::*;
     use crate::metrics::Metrics;
-    use crate::model::Catalog;
     use crate::screen::VideoSink;
 
     struct NullSink;
@@ -267,26 +263,35 @@ mod tests {
         fn set_visible(&mut self, _v: bool) {}
     }
 
+    fn test_tabs() -> Vec<String> {
+        vec!["Home".into(), "Movies".into(), "Shows".into()]
+    }
+
+    fn new_shell() -> MainShell {
+        MainShell::new("Test Brand".into(), test_tabs())
+    }
+
     fn with_shell(f: impl FnOnce(&mut MainShell, &mut Ctx)) -> MainShell {
-        let cat = Catalog::sample();
-        let metrics = Metrics::tv();
+        let cat = crate::test_support::sample_catalog();
+        let metrics = Metrics::default();
         let mut video = NullSink;
         let mut ctx = Ctx {
             catalog: &cat,
             metrics: &metrics,
             video: &mut video,
+            design: crate::test_support::test_design(),
         };
-        let mut shell = MainShell::new();
+        let mut shell = new_shell();
         f(&mut shell, &mut ctx);
         shell
     }
 
     #[test]
     fn home_loaded_at_start_others_lazy() {
-        let s = MainShell::new();
-        assert!(s.page_loaded(Tab::Home));
-        assert!(!s.page_loaded(Tab::Movies));
-        assert!(!s.page_loaded(Tab::Shows));
+        let s = new_shell();
+        assert!(s.page_loaded(0));
+        assert!(!s.page_loaded(1));
+        assert!(!s.page_loaded(2));
     }
 
     #[test]
@@ -297,8 +302,8 @@ mod tests {
             assert!(s.nav_focused());
             s.handle_key(Key::Right, ctx);
         });
-        assert_eq!(s.selected_tab(), Tab::Movies);
-        assert!(s.page_loaded(Tab::Movies));
+        assert_eq!(s.selected_tab(), 1);
+        assert!(s.page_loaded(1));
         assert!((s.slide_target() - 1.0).abs() < 1e-4);
     }
 
@@ -309,9 +314,9 @@ mod tests {
             s.handle_key(Key::Right, ctx);
             s.handle_key(Key::Right, ctx);
         });
-        assert_eq!(s.selected_tab(), Tab::Shows);
+        assert_eq!(s.selected_tab(), 2);
         assert!((s.slide_target() - 2.0).abs() < 1e-4);
-        assert!(s.page_loaded(Tab::Shows));
+        assert!(s.page_loaded(2));
     }
 
     #[test]
@@ -357,15 +362,16 @@ mod tests {
 
     #[test]
     fn back_on_browse_pops_root() {
-        let cat = Catalog::sample();
-        let metrics = Metrics::tv();
+        let cat = crate::test_support::sample_catalog();
+        let metrics = Metrics::default();
         let mut video = NullSink;
         let mut ctx = Ctx {
             catalog: &cat,
             metrics: &metrics,
             video: &mut video,
+            design: crate::test_support::test_design(),
         };
-        let mut shell = MainShell::new();
+        let mut shell = new_shell();
         assert!(matches!(
             Screen::handle_key(&mut shell, Key::Back, &mut ctx),
             Transition::Pop
@@ -374,15 +380,16 @@ mod tests {
 
     #[test]
     fn back_on_metadata_does_not_pop() {
-        let cat = Catalog::sample();
-        let metrics = Metrics::tv();
+        let cat = crate::test_support::sample_catalog();
+        let metrics = Metrics::default();
         let mut video = NullSink;
         let mut ctx = Ctx {
             catalog: &cat,
             metrics: &metrics,
             video: &mut video,
+            design: crate::test_support::test_design(),
         };
-        let mut shell = MainShell::new();
+        let mut shell = new_shell();
         Screen::handle_key(&mut shell, Key::Down, &mut ctx);
         Screen::handle_key(&mut shell, Key::Enter, &mut ctx);
         assert!(shell.active_page_mut().unwrap().overlay_open());

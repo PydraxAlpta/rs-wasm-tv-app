@@ -14,6 +14,8 @@ pub mod metrics;
 pub mod model;
 pub mod renderer;
 pub mod screen;
+#[cfg(test)]
+mod test_support;
 pub mod theme;
 pub mod ui;
 
@@ -22,8 +24,3 @@ pub use metrics::{Layout, Metrics};
 pub use model::Catalog;
 pub use renderer::Renderer;
 pub use screen::NullVideoSink;
-
-/// Fixed design-space resolution. The canvas backing store is this size; CSS
-/// scales it to the viewport with aspect-preserving letterboxing.
-pub const DESIGN_WIDTH: u32 = 1920;
-pub const DESIGN_HEIGHT: u32 = 1080;

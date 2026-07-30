@@ -9,6 +9,7 @@
 //!   Enter / Space → activate (open card / toggle playback)
 //!   Escape / Backspace / Tizen Back (keyCode 10009) → back / exit
 
+mod content;
 mod utils;
 mod video;
 
@@ -17,10 +18,11 @@ use std::rc::Rc;
 
 use video::{JsPlayer, JsPlayerSink};
 
+use tv_ui::geom::Rect;
 use tv_ui::renderer::Renderer;
 use tv_ui::screen::{Ctx, Key, Screen, Transition};
-use tv_ui::ui::MainShell;
-use tv_ui::{Catalog, Color, Metrics, DESIGN_HEIGHT, DESIGN_WIDTH};
+use tv_ui::ui::{MainShell, PlayerScreen};
+use tv_ui::{Catalog, Color, Metrics};
 use tv_ui_webgl::{context_from_canvas, ImageCache, WebGl2Renderer};
 use utils::set_panic_hook;
 
@@ -28,6 +30,11 @@ use js_sys::Reflect;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use web_sys::{HtmlCanvasElement, HtmlElement, KeyboardEvent};
+
+/// This app's design-space resolution. `tv-ui` has no opinion on resolution —
+/// this is this app's own choice, passed down via `Ctx::design`.
+const DESIGN_WIDTH: u32 = 1920;
+const DESIGN_HEIGHT: u32 = 1080;
 
 /// Transparent clear so the `<video>` underlay shows through in the player.
 const CLEAR: Color = Color::rgba(0, 0, 0, 0);
@@ -42,6 +49,7 @@ struct App {
     video: JsPlayerSink,
     catalog: Catalog,
     metrics: Metrics,
+    design: Rect,
     stack: Vec<Box<dyn Screen>>,
     last_ts: Option<f64>,
     perf_hud: HtmlElement,
@@ -68,6 +76,7 @@ impl App {
                 video,
                 catalog,
                 metrics,
+                design,
                 stack,
                 ..
             } = self;
@@ -76,6 +85,7 @@ impl App {
                 catalog,
                 metrics,
                 video,
+                design: *design,
             };
             if let Some(top) = stack.last_mut() {
                 top.update(dt, &mut ctx);
@@ -120,6 +130,7 @@ impl App {
             video,
             catalog,
             metrics,
+            design,
             stack,
             ..
         } = self;
@@ -127,6 +138,7 @@ impl App {
             catalog,
             metrics,
             video,
+            design: *design,
         };
         let transition = match stack.last_mut() {
             Some(top) => top.handle_key(key, &mut ctx),
@@ -141,6 +153,14 @@ impl App {
                 stack.pop();
                 stack.is_empty()
             }
+            // The screen reported an activation it couldn't resolve itself
+            // (e.g. "Play"); we own app policy, so we resolve the card id to
+            // a URL and construct/push the next screen ourselves.
+            Transition::Activate(item) => {
+                let url = content::video_url_for(item.id);
+                stack.push(Box::new(PlayerScreen::new(item.title, url)));
+                false
+            }
             // Back on the root screen (no overlay) pops → empty stack → exit.
             // Overlay/metadata Back is consumed as Transition::None and must not exit.
             Transition::None => false,
@@ -152,6 +172,7 @@ impl App {
             video,
             catalog,
             metrics,
+            design,
             stack,
             ..
         } = self;
@@ -159,6 +180,7 @@ impl App {
             catalog,
             metrics,
             video,
+            design: *design,
         };
         if let Some(top) = stack.last_mut() {
             let _ = top.handle_key_up(key, &mut ctx);
@@ -192,9 +214,13 @@ pub fn setup_app(root: HtmlElement, player: JsPlayer) {
     let app = Rc::new(RefCell::new(App {
         renderer,
         video: JsPlayerSink::new(player),
-        catalog: Catalog::sample(),
-        metrics: Metrics::tv(),
-        stack: vec![Box::new(MainShell::new())],
+        catalog: content::sample_catalog(),
+        metrics: Metrics::default(),
+        design: Rect::new(0.0, 0.0, DESIGN_WIDTH as f32, DESIGN_HEIGHT as f32),
+        stack: vec![Box::new(MainShell::new(
+            "WASM TV".to_string(),
+            vec!["Home".into(), "Movies".into(), "Shows".into()],
+        ))],
         last_ts: None,
         perf_hud,
         frame_ms_avg: 0.0,

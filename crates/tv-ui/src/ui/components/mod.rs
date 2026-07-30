@@ -14,5 +14,5 @@ pub mod widget;
 pub use banner::BannerCarousel;
 pub use carousel::HCarousel;
 pub use metadata_overlay::{MetadataItem, MetadataOverlay};
-pub use nav_bar::{NavBar, Tab};
+pub use nav_bar::NavBar;
 pub use widget::{Flex, FocusResult, Widget};

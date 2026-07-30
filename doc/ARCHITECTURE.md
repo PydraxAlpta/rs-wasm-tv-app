@@ -125,7 +125,7 @@ to the `FocusScope` child index.
 
 | Widget | File | Role |
 | --- | --- | --- |
-| `NavBar` | `nav_bar.rs` | Top tabs (Home/Movies/Shows), brand, animated underline `Tween`. |
+| `NavBar` | `nav_bar.rs` | Tabs + brand, both caller-supplied (`NavBar::new(brand, labels)`), animated underline `Tween`. |
 | `BannerCarousel` | `banner.rs` | Wrapping hero strip. Drawn as a **zero-flex overlay** with a reveal `Tween`, so collapsing it doesn't reflow the rails. |
 | `HCarousel` + `draw_card_row` | `carousel.rs` | The horizontal index/tween engine (clamped or wrapping) and the batched three-pass card-row painter. Also holds the shared timing/threshold constants. |
 | `RailList` | `rail_list.rs` | The vertical leanback rail stack: fixed focus anchor, per-rail remembered column, lazy rail batches, hold-chaining. |
@@ -135,8 +135,10 @@ to the `FocusScope` child index.
 
 ### Pages (`crates/tv-ui/src/ui/pages/`)
 
-- **`MainShell`** — the app root `Screen`. Owns the `NavBar` and a lazily-populated
-  `[Option<CatalogPage>; 3]` (Home loads eagerly, the others on first visit). A `slide`
+- **`MainShell`** — the app root `Screen`. `MainShell::new(brand, tab_labels)` owns the
+  `NavBar` and a lazily-populated `Vec<Option<CatalogPage>>` (index 0 loads eagerly, the
+  rest on first visit); `tv-app` supplies its own brand/tabs at the one production call
+  site — nothing about tab identity or count is baked into `tv-ui`. A `slide`
   `Tween` horizontally translates the active tab's page into view; each page strip is
   clipped with `set_clip` so neighbours don't bleed while sliding. `ShellFocus` toggles
   between the nav and the content; Up from the top content zone moves to the nav, Down
@@ -145,8 +147,9 @@ to the `FocusScope` child index.
   `MetadataOverlay`, and the `FocusScope` that switches between banner and rails. Handles
   vertical hold-traverse across the banner ↔ rails ↔ (nav) boundaries. Also implements a
   thin `Screen` adapter used only by its own unit tests.
-- **`PlayerScreen`** — the video screen. On first `update` it makes the video visible and
-  starts playback (`SAMPLE_VIDEO_URL`); it renders a bottom control block (title, scrub
+- **`PlayerScreen`** — the video screen. `PlayerScreen::new(title, url)` takes both from the
+  caller; on first `update` it makes the video visible and starts playback at `url`. It
+  renders a bottom control block (title, scrub
   bar with a knob, state line, key hints) that autohides after `HIDE_AFTER_SECS` of idle
   via a fade `Tween`. Left/Right seek ±5 s, Enter toggles play/pause, Back returns to
   browse.
@@ -162,13 +165,23 @@ to the `FocusScope` child index.
 - **Exit on empty stack.** A `Back` that reaches the root screen returns `Pop`; the app
   pops, sees the stack is empty, and calls `exit_app()`. A `Back` consumed by an open
   overlay is turned into `Transition::None` and must *not* exit.
+- **Activate bubbles up, doesn't resolve itself.** `Enter` on the overlay's Play button
+  doesn't push `PlayerScreen` directly — the overlay only knows the card's own render data
+  (`id`/`title`/`image_url`), not what "play" should mean. It returns
+  `Transition::Activate(ActivatedItem { id, title, image_url })`, and `App::handle_key`
+  (the driving app, not the library) resolves `id` to a video URL via
+  `content::video_url_for` and pushes `PlayerScreen::new(title, url)`. Same shape as
+  `tv-ui-web`'s `select`/`focuschange` `CustomEvent`s: components report, the app decides.
 
 ## Content model (`crates/tv-ui/src/model.rs`)
 
 `Catalog { banners: Vec<BannerSlide>, rails: Vec<Rail> }`, `Rail { title, cards }`,
-`Card { id, title, image_url }`. `Catalog::sample()` builds demo content (5 banners,
-20 rails × 20 cards) with stable picsum seeds and one shared sample video URL. Adding
-content here requires no changes anywhere else.
+`Card { id, title, image_url }` — plain struct defs only; `tv-ui` has no demo data of its
+own. Adding content fields here requires no changes anywhere else. `tv-app`'s
+`crates/tv-app/src/content.rs` builds the actual demo content (`sample_catalog()`: 5
+banners, 20 rails × 20 cards, stable picsum seeds, one shared `SAMPLE_VIDEO_URL` resolved
+via `video_url_for`); `tv-ui`'s own tests use a separate generic `#[cfg(test)]` fixture in
+`crates/tv-ui/src/test_support.rs` instead.
 
 ## Data flow per frame
 

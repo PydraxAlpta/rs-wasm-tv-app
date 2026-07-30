@@ -4,7 +4,7 @@
 
 use crate::geom::Rect;
 use crate::renderer::Renderer;
-use crate::screen::{Ctx, Key, Screen, Transition};
+use crate::screen::{ActivatedItem, Ctx, Key, Screen, Transition};
 use crate::ui::components::banner::BannerCarousel;
 use crate::ui::components::containers::layout_column;
 use crate::ui::components::focus::{index_from_zone, zone_from_index, FocusScope, FocusZone};
@@ -12,7 +12,6 @@ use crate::ui::components::metadata_overlay::{MetadataItem, MetadataOverlay};
 use crate::ui::components::carousel::{HOLD_SCROLL_DELAY, NAV_TAU};
 use crate::ui::components::rail_list::RailList;
 use crate::ui::components::widget::{FocusResult, Widget};
-use super::player::PlayerScreen;
 
 /// Pause on a focus zone before hold-traverse continues to the next zone.
 const BOUNDARY_DWELL: f32 = NAV_TAU;
@@ -48,12 +47,16 @@ pub struct CatalogPage {
 impl CatalogPage {
     pub fn new() -> Self {
         let mut page = Self {
-            banner: BannerCarousel::new(420.0),
+            // Immediately overwritten by `layout_in_strip`'s `set_full_height`
+            // every frame — a real value isn't known at construction.
+            banner: BannerCarousel::new(0.0),
             rails: RailList::new(),
             scope: FocusScope::new(index_from_zone(FocusZone::Banner)),
             overlay: MetadataOverlay::new(),
             content_bounds: Rect::new(0.0, 0.0, 0.0, 0.0),
-            page_bounds: Rect::design(),
+            // Immediately overwritten by `layout_in_strip` every frame before
+            // anything paints — a real design size isn't known at construction.
+            page_bounds: Rect::new(0.0, 0.0, 0.0, 0.0),
             held_vertical: None,
             held_vertical_secs: 0.0,
             boundary_cooldown: 0.0,
@@ -153,8 +156,8 @@ impl CatalogPage {
     pub fn layout_in_strip(&mut self, ctx: &Ctx, page_x: f32, nav_h: f32) {
         let m = ctx.metrics;
         self.banner.set_full_height(m.banner_h);
-        let full_w = crate::DESIGN_WIDTH as f32;
-        let full_h = crate::DESIGN_HEIGHT as f32;
+        let full_w = ctx.design.w;
+        let full_h = ctx.design.h;
         self.page_bounds = Rect::new(page_x, 0.0, full_w, full_h);
         let content = Rect::new(
             page_x + m.safe_margin,
@@ -252,10 +255,11 @@ impl CatalogPage {
             match self.overlay.handle_key(key, ctx) {
                 FocusResult::Activate => {
                     if let Some(item) = self.overlay.item() {
-                        let title = item.title.clone();
-                        return PageKeyResult::Transition(Transition::Push(Box::new(
-                            PlayerScreen::new(title),
-                        )));
+                        return PageKeyResult::Transition(Transition::Activate(ActivatedItem {
+                            id: item.id,
+                            title: item.title.clone(),
+                            image_url: item.image_url.clone(),
+                        }));
                     }
                 }
                 FocusResult::Handled | FocusResult::Ignored | FocusResult::MoveOut(_) => {}
@@ -330,7 +334,7 @@ impl CatalogPage {
 
     pub fn render(&self, r: &mut dyn Renderer, ctx: &Ctx) {
         // Skip pages fully off-screen.
-        let full_w = crate::DESIGN_WIDTH as f32;
+        let full_w = ctx.design.w;
         if self.page_bounds.right() < 0.0 || self.page_bounds.x > full_w {
             return;
         }
@@ -344,6 +348,7 @@ impl CatalogPage {
             FocusZone::Banner => {
                 let i = self.banner.index();
                 ctx.catalog.banners.get(i).map(|b| MetadataItem {
+                    id: None,
                     title: b.title.clone(),
                     image_url: b.image_url.clone(),
                     rail_index: 0,
@@ -357,6 +362,7 @@ impl CatalogPage {
                     .get(ri)
                     .and_then(|r| r.cards.get(ci))
                     .map(|c| MetadataItem {
+                        id: Some(c.id),
                         title: c.title.clone(),
                         image_url: c.image_url.clone(),
                         rail_index: ri,
@@ -393,7 +399,7 @@ impl Screen for CatalogPage {
 
     fn render(&mut self, r: &mut dyn Renderer, ctx: &mut Ctx) {
         let m = ctx.metrics;
-        let full = Rect::design();
+        let full = ctx.design;
         r.fill_rect(
             full.x as i32,
             full.y as i32,
@@ -410,7 +416,6 @@ impl Screen for CatalogPage {
 mod tests {
     use super::*;
     use crate::metrics::Metrics;
-    use crate::model::Catalog;
     use crate::screen::VideoSink;
 
     struct NullSink;
@@ -432,13 +437,14 @@ mod tests {
     }
 
     fn with_ctx(f: impl FnOnce(&mut CatalogPage, &mut Ctx)) -> CatalogPage {
-        let cat = Catalog::sample();
-        let metrics = Metrics::tv();
+        let cat = crate::test_support::sample_catalog();
+        let metrics = Metrics::default();
         let mut video = NullSink;
         let mut ctx = Ctx {
             catalog: &cat,
             metrics: &metrics,
             video: &mut video,
+            design: crate::test_support::test_design(),
         };
         let mut screen = CatalogPage::new();
         screen.set_content_focused(true);
@@ -460,7 +466,7 @@ mod tests {
                 s.handle_key(Key::Right, ctx);
             }
         });
-        let last = Catalog::sample().rails[0].cards.len() - 1;
+        let last = crate::test_support::sample_catalog().rails[0].cards.len() - 1;
         assert_eq!(s.focus(), (0, last));
     }
 
@@ -481,7 +487,10 @@ mod tests {
                 s.handle_key(Key::Down, ctx);
             }
         });
-        assert_eq!(s.focus().0, Catalog::sample().rails.len() - 1);
+        assert_eq!(
+            s.focus().0,
+            crate::test_support::sample_catalog().rails.len() - 1
+        );
         assert!((s.banner_reveal_target() - 0.0).abs() < 1e-4);
     }
 
@@ -564,18 +573,19 @@ mod tests {
         let item = s.overlay.item().unwrap();
         assert_eq!(item.rail_index, 0);
         assert_eq!(item.card_index, 1);
-        assert_eq!(item.title, "Glass Orchard");
+        assert_eq!(item.title, "Card 0-1");
     }
 
     #[test]
-    fn overlay_play_pushes_player() {
-        let cat = Catalog::sample();
-        let metrics = Metrics::tv();
+    fn overlay_play_reports_activate() {
+        let cat = crate::test_support::sample_catalog();
+        let metrics = Metrics::default();
         let mut video = NullSink;
         let mut ctx = Ctx {
             catalog: &cat,
             metrics: &metrics,
             video: &mut video,
+            design: crate::test_support::test_design(),
         };
         let mut screen = CatalogPage::new();
         screen.set_content_focused(true);
@@ -590,7 +600,13 @@ mod tests {
         ));
         assert!(screen.overlay_open());
         let t = Screen::handle_key(&mut screen, Key::Enter, &mut ctx);
-        assert!(matches!(t, Transition::Push(_)));
+        match t {
+            Transition::Activate(item) => {
+                assert_eq!(item.id, Some(0));
+                assert_eq!(item.title, "Card 0-0");
+            }
+            _ => panic!("expected Transition::Activate"),
+        }
         assert!(screen.overlay_open());
     }
 

@@ -5,6 +5,7 @@
 //! testable off-wasm. On wasm, `VideoSink` is backed by a JS `PlayerAdapter`.
 //! New screens implement [`Screen`] and are pushed/popped via [`Transition`].
 
+use crate::geom::Rect;
 use crate::metrics::Metrics;
 use crate::model::Catalog;
 use crate::renderer::Renderer;
@@ -59,6 +60,20 @@ pub struct Ctx<'a> {
     pub catalog: &'a Catalog,
     pub metrics: &'a Metrics,
     pub video: &'a mut dyn VideoSink,
+    /// The host-supplied design-space bounds (e.g. the canvas backing
+    /// store's full size) — no fixed resolution is baked into this crate.
+    pub design: Rect,
+}
+
+/// Enough identity for a driver to resolve what to do next (e.g. map a card
+/// id to a playable URL) — a screen reports this instead of building the next
+/// screen itself, when it needs data outside its own knowledge. `id` is
+/// `Option` because not every activatable item has one (e.g. banners).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ActivatedItem {
+    pub id: Option<u32>,
+    pub title: String,
+    pub image_url: String,
 }
 
 /// What a screen wants the stack to do after handling a key.
@@ -66,6 +81,10 @@ pub enum Transition {
     None,
     Push(Box<dyn Screen>),
     Pop,
+    /// A screen reported an activation it can't resolve into a concrete next
+    /// screen itself (e.g. "Play" was pressed) — the driver decides what, if
+    /// anything, to push.
+    Activate(ActivatedItem),
 }
 
 /// A full-screen view. The stack renders only the top screen.

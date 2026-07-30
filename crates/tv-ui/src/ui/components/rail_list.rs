@@ -324,11 +324,11 @@ impl Widget for RailList {
                 self.focus_col.get(ri).copied().unwrap_or(0) as f32
             };
 
-            if title_y + 30.0 >= self.bounds.y {
+            if title_y + m.rail_title_font >= self.bounds.y {
                 r.draw_text(
                     self.bounds.x as i32,
                     title_y as i32,
-                    30,
+                    m.rail_title_font.round() as i32,
                     theme::RAIL_TITLE,
                     &rail.title,
                 );
@@ -360,11 +360,11 @@ impl Widget for RailList {
             };
             if let Some(item) = rail.cards.get(col) {
                 let name_y = row_top + card_h + 14.0;
-                if name_y + 28.0 >= self.bounds.y && name_y <= self.bounds.bottom() {
+                if name_y + m.card_name_font >= self.bounds.y && name_y <= self.bounds.bottom() {
                     r.draw_text(
                         self.bounds.x as i32,
                         name_y as i32,
-                        28,
+                        m.card_name_font.round() as i32,
                         theme::TEXT,
                         &item.title,
                     );
@@ -497,13 +497,14 @@ mod tests {
     }
 
     fn with_rails(f: impl FnOnce(&mut RailList, &mut Ctx)) {
-        let cat = Catalog::sample();
-        let metrics = Metrics::tv();
+        let cat = crate::test_support::sample_catalog();
+        let metrics = Metrics::default();
         let mut video = NullSink;
         let mut ctx = Ctx {
             catalog: &cat,
             metrics: &metrics,
             video: &mut video,
+            design: crate::test_support::test_design(),
         };
         let mut rails = RailList::new();
         f(&mut rails, &mut ctx);
@@ -524,7 +525,7 @@ mod tests {
                 },
             ],
         };
-        let metrics = Metrics::tv();
+        let metrics = Metrics::default();
         let mut video = NullSink;
         let mut rails = RailList::new();
 
@@ -533,6 +534,7 @@ mod tests {
                 catalog: &cat,
                 metrics: &metrics,
                 video: &mut video,
+                design: crate::test_support::test_design(),
             };
             rails.ensure_init(&ctx);
         }
@@ -549,6 +551,7 @@ mod tests {
                 catalog: &cat,
                 metrics: &metrics,
                 video: &mut video,
+                design: crate::test_support::test_design(),
             };
             rails.ensure_init(&ctx);
         }

@@ -5,7 +5,6 @@
 use crate::anim::Tween;
 use crate::buffer::Color;
 use crate::geom::{Insets, Rect};
-use crate::model::SAMPLE_VIDEO_URL;
 use crate::renderer::Renderer;
 use crate::screen::{Ctx, Key, Screen, Transition};
 use crate::theme;
@@ -21,6 +20,7 @@ const FADE_TAU: f32 = 0.2;
 
 pub struct PlayerScreen {
     title: String,
+    url: String,
     started: bool,
     /// Seconds since last control-revealing input.
     idle_secs: f32,
@@ -29,9 +29,10 @@ pub struct PlayerScreen {
 }
 
 impl PlayerScreen {
-    pub fn new(title: String) -> Self {
+    pub fn new(title: String, url: String) -> Self {
         Self {
             title,
+            url,
             started: false,
             idle_secs: 0.0,
             chrome_vis: Tween::new(1.0, FADE_TAU),
@@ -48,7 +49,7 @@ impl Screen for PlayerScreen {
     fn update(&mut self, dt: f32, ctx: &mut Ctx) {
         if !self.started {
             ctx.video.set_visible(true);
-            ctx.video.load_and_play(SAMPLE_VIDEO_URL);
+            ctx.video.load_and_play(&self.url);
             self.started = true;
             self.bump_controls();
         }
@@ -102,7 +103,7 @@ impl Screen for PlayerScreen {
             return;
         }
 
-        let full = Rect::design();
+        let full = ctx.design;
         let margin = ctx.metrics.safe_margin;
         // Lift the whole chrome column above the bottom safe area.
         let area = full.inset(Insets {
@@ -172,7 +173,7 @@ impl Widget for PlayerChrome {
     fn render(&self, r: &mut dyn Renderer, ctx: &Ctx) {
         let a = (self.alpha * 255.0) as u8;
         let scrim_a = ((theme::SCRIM.a as f32) * self.alpha) as u8;
-        let full_w = crate::DESIGN_WIDTH as i32;
+        let full_w = ctx.design.w as i32;
         let (bx, by, bw, _bh) = self.bounds.as_i32();
 
         // Scrim stays inside the chrome band (no bleed past the bottom).
@@ -253,7 +254,6 @@ fn fmt_time(secs: f64) -> String {
 mod tests {
     use super::*;
     use crate::metrics::Metrics;
-    use crate::model::Catalog;
     use crate::screen::{Ctx, VideoSink};
 
     struct NullSink;
@@ -285,15 +285,16 @@ mod tests {
 
     #[test]
     fn controls_autohide_after_idle() {
-        let cat = Catalog::sample();
-        let metrics = Metrics::tv();
+        let cat = crate::test_support::sample_catalog();
+        let metrics = Metrics::default();
         let mut video = NullSink;
         let mut ctx = Ctx {
             catalog: &cat,
             metrics: &metrics,
             video: &mut video,
+            design: crate::test_support::test_design(),
         };
-        let mut screen = PlayerScreen::new("T".into());
+        let mut screen = PlayerScreen::new("T".into(), "https://example.com/video.mp4".into());
         screen.update(0.0, &mut ctx);
         assert!((screen.chrome_vis.target() - 1.0).abs() < 1e-4);
 

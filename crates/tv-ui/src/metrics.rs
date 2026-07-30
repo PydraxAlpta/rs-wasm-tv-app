@@ -15,10 +15,14 @@ pub struct Metrics {
     pub rail_step: f32,
     /// Left edge of the fixed leanback focus card slot (within content).
     pub focus_x: f32,
+    /// Font size (px) for a rail's title text.
+    pub rail_title_font: f32,
+    /// Font size (px) for the focused card's name, drawn below the row.
+    pub card_name_font: f32,
 }
 
-impl Metrics {
-    pub fn tv() -> Self {
+impl Default for Metrics {
+    fn default() -> Self {
         let safe_margin = 64.0;
         let rail_title_h = 44.0;
         let card_w = 200.0;
@@ -33,9 +37,13 @@ impl Metrics {
             rail_title_h,
             rail_step: rail_title_h + card_h + 56.0 + 36.0,
             focus_x: safe_margin,
+            rail_title_font: 30.0,
+            card_name_font: 28.0,
         }
     }
+}
 
+impl Metrics {
     pub fn safe_insets(self) -> Insets {
         Insets::uniform(self.safe_margin)
     }
@@ -53,8 +61,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn tv_metrics_are_portrait_cards() {
-        let m = Metrics::tv();
+    fn default_metrics_are_portrait_cards() {
+        let m = Metrics::default();
         assert!(m.card_h > m.card_w);
         assert!(m.banner_h > 0.0);
     }

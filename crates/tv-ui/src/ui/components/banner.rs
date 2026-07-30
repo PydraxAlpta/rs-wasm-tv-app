@@ -243,7 +243,6 @@ impl Widget for BannerCarousel {
 mod tests {
     use super::*;
     use crate::metrics::Metrics;
-    use crate::model::Catalog;
     use crate::screen::VideoSink;
 
     struct NullSink;
@@ -266,13 +265,14 @@ mod tests {
 
     #[test]
     fn hold_right_chains_before_settle() {
-        let cat = Catalog::sample();
-        let metrics = Metrics::tv();
+        let cat = crate::test_support::sample_catalog();
+        let metrics = Metrics::default();
         let mut video = NullSink;
         let mut ctx = Ctx {
             catalog: &cat,
             metrics: &metrics,
             video: &mut video,
+            design: crate::test_support::test_design(),
         };
         let mut banner = BannerCarousel::new(420.0);
         banner.set_focused(true);

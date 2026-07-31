@@ -17,6 +17,11 @@ pub const NAV_TAU: f32 = 0.11;
 /// Vertical rail scroll — slower than horizontal for a longer ease.
 pub const RAIL_TAU: f32 = 0.2;
 
+/// Hero banner scroll — a bit slower than card rails so hold-chaining does not
+/// race through full-bleed slides; still snappy enough that the ease-out does
+/// not linger.
+pub const BANNER_TAU: f32 = 0.16;
+
 /// How many rails become available per lazy-load batch.
 pub const RAIL_BATCH: usize = 5;
 
@@ -45,9 +50,13 @@ pub struct HCarousel {
 
 impl HCarousel {
     pub fn new(wrap: bool) -> Self {
+        Self::with_tau(wrap, NAV_TAU)
+    }
+
+    pub fn with_tau(wrap: bool, tau: f32) -> Self {
         Self {
             index: 0,
-            anim: Tween::new(0.0, NAV_TAU),
+            anim: Tween::new(0.0, tau),
             wrap,
         }
     }

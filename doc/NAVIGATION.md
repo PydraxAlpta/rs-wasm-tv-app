@@ -32,9 +32,10 @@ identical at 30/60/120 fps. `set_target` aims it, `step(dt)` advances it, `snap`
 instantly, `is_settled` reports "close enough". Smaller `tau` = snappier.
 
 Key `tau` values (`carousel.rs` unless noted): `NAV_TAU = 0.11` (horizontal cards, nav
-underline, banner), `RAIL_TAU = 0.2` (vertical rails — a longer ease), plus per-widget
-constants like the shell `SLIDE_TAU = 0.18`, overlay `SLIDE_TAU = 0.16`, player
-`FADE_TAU = 0.2`.
+underline, banner reveal), `BANNER_TAU = 0.16` (hero page scroll — a touch slower than
+cards so hold-chaining does not outrun full-bleed uploads), `RAIL_TAU = 0.2` (vertical
+rails — a longer ease), plus per-widget constants like the shell `SLIDE_TAU = 0.18`,
+overlay `SLIDE_TAU = 0.16`, player `FADE_TAU = 0.2`.
 
 ## The two-index rail model (`RailList`)
 

@@ -7,7 +7,7 @@ use crate::renderer::Renderer;
 use crate::screen::{Ctx, Key};
 use crate::theme;
 use super::card;
-use super::carousel::{HCarousel, HOLD_SCROLL_DELAY, NAV_TAU};
+use super::carousel::{HCarousel, BANNER_TAU, HOLD_SCROLL_DELAY, NAV_TAU};
 use super::widget::{Flex, FocusResult, Widget};
 
 const DOT_RADIUS: i32 = 7;
@@ -33,7 +33,7 @@ pub struct BannerCarousel {
 impl BannerCarousel {
     pub fn new(full_height: f32) -> Self {
         Self {
-            pages: HCarousel::new(true),
+            pages: HCarousel::with_tau(true, BANNER_TAU),
             reveal: Tween::new(1.0, NAV_TAU),
             held: None,
             held_secs: 0.0,
@@ -125,6 +125,9 @@ impl BannerCarousel {
         for offset in -1..=2 {
             let logical = base + offset;
             let idx = logical.rem_euclid(n) as usize;
+            let url = &slides[idx].image_url;
+            r.prefetch_image(url);
+
             let x = viewport_l + (logical as f32 - slide_t) * self.bounds.w;
             // Strict bounds check — avoid zero-size / fully clipped draws that
             // flash when the parent page is mid-slide.
@@ -133,7 +136,9 @@ impl BannerCarousel {
             }
             let xi = x.round() as i32;
             r.fill_rect(xi, by, bw, bh, theme::CARD_BG);
-            r.draw_image(xi, by, bw, bh, &slides[idx].image_url);
+            // Upload under the renderer's per-frame budget so neighbors can fill
+            // in during the slide instead of popping only after settle.
+            r.draw_image(xi, by, bw, bh, url);
         }
 
         // Dots — bottom-left inside bounds.
@@ -276,22 +281,25 @@ mod tests {
         };
         let mut banner = BannerCarousel::new(420.0);
         banner.set_focused(true);
-        let start = banner.index();
         banner.handle_key(Key::Right, &mut ctx);
+        assert_eq!(banner.index(), 1, "tap should advance one page");
+        let after_tap = banner.pages.target();
         // Past HOLD_SCROLL_DELAY so continuous scroll engages.
         for _ in 0..30 {
             banner.update(1.0 / 60.0, &mut ctx);
         }
-        assert_ne!(
-            banner.index(),
-            start,
-            "should have advanced while held"
+        assert!(
+            banner.pages.target() > after_tap + 0.5,
+            "hold should keep runway ahead (target {} after tap {})",
+            banner.pages.target(),
+            after_tap
         );
         banner.handle_key_up(Key::Right, &mut ctx);
-        for _ in 0..120 {
+        for _ in 0..240 {
             banner.update(1.0 / 60.0, &mut ctx);
         }
         assert!(banner.pages.is_settled());
-        assert_ne!(banner.index(), start);
+        // Wrapped index after normalize — any settled page other than the start.
+        assert_ne!(banner.index(), 0);
     }
 }

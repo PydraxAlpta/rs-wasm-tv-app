@@ -293,8 +293,7 @@ impl Widget for RailList {
     }
 
     fn render(&self, r: &mut dyn Renderer, ctx: &Ctx) {
-        // Prefetch decode while scrolling; the renderer's per-frame upload budget
-        // amortizes GPU uploads so new rails can appear during vertical motion.
+        // Decode in the background while scrolling; GPU upload waits until settle.
         self.prefetch_nearby(r, ctx);
 
         let m = ctx.metrics;
@@ -302,6 +301,11 @@ impl Widget for RailList {
         let focus_y = self.focus_card_y(ctx);
         let card_w = m.card_w;
         let card_h = m.card_h;
+        let images = if self.anim_rail.is_settled() {
+            carousel::ImageDraw::All
+        } else {
+            carousel::ImageDraw::CachedOnly
+        };
         let n = self.visible_rail_count(ctx);
 
         for ri in 0..n {
@@ -345,7 +349,7 @@ impl Widget for RailList {
                 &rail.cards,
                 col_off,
                 self.bounds.x,
-                carousel::ImageDraw::All,
+                images,
             );
 
             // Current card title rides with each rail (not pinned to the focus slot).

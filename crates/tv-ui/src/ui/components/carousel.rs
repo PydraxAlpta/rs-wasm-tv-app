@@ -202,6 +202,7 @@ pub fn draw_card_row(
 ) {
     let card_w = metrics.card_w;
     let card_h = metrics.card_h;
+    let radius = metrics.card_radius.round() as i32;
     let step = metrics.card_step();
     let row_y = bounds.y;
 
@@ -219,7 +220,7 @@ pub fn draw_card_row(
 
     for (ci, _) in cards.iter().enumerate() {
         if let Some(rect) = card_visible(ci) {
-            card::draw_card_bg(r, rect);
+            card::draw_card_bg(r, rect, radius);
         }
     }
 
@@ -233,6 +234,7 @@ pub fn draw_card_row(
                 w,
                 h,
                 url: &item.image_url,
+                radius,
             });
         }
     }
@@ -243,7 +245,7 @@ pub fn draw_card_row(
 
     for (ci, _) in cards.iter().enumerate() {
         if let Some(rect) = card_visible(ci) {
-            card::draw_card_border(r, rect);
+            card::draw_card_border(r, rect, radius);
         }
     }
 }

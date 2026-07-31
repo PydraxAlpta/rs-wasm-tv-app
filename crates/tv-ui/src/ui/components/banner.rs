@@ -1,13 +1,12 @@
 //! Hero banner carousel widget: full-width sliding pages with pagination dots.
 
-use crate::anim::Tween;
 use crate::geom::Rect;
 use crate::model::BannerSlide;
 use crate::renderer::Renderer;
 use crate::screen::{Ctx, Key};
 use crate::theme;
 use super::card;
-use super::carousel::{HCarousel, BANNER_TAU, HOLD_SCROLL_DELAY, NAV_TAU};
+use super::carousel::{HCarousel, BANNER_TAU, HOLD_SCROLL_DELAY};
 use super::widget::{Flex, FocusResult, Widget};
 
 const DOT_RADIUS: i32 = 7;
@@ -15,31 +14,32 @@ const DOT_GAP: i32 = 22;
 
 /// Standalone hero strip drawn as an overlay (zero flex height).
 ///
-/// Collapse is visual only via the reveal tween; parents keep rail layout stable
-/// and pass `full_height * reveal` as rail top padding.
+/// Vertical position is driven by the same rail scroll offset as [`RailList`]
+/// (`anim_rail * rail_step`), so moving past rail 0 scrolls the banner and
+/// first rail together with the normal rail ease — not a separate collapse.
 #[derive(Debug, Clone)]
 pub struct BannerCarousel {
     pages: HCarousel,
-    /// `1` = fully shown, `0` = collapsed.
-    reveal: Tween,
     /// Held Left/Right for app-driven chaining (OS key-repeat is ignored).
     held: Option<Key>,
     held_secs: f32,
     focused: bool,
     bounds: Rect,
     full_height: f32,
+    /// Resting top (scroll offset 0), from [`Self::layout_overlay`].
+    slot_top: f32,
 }
 
 impl BannerCarousel {
     pub fn new(full_height: f32) -> Self {
         Self {
             pages: HCarousel::with_tau(true, BANNER_TAU),
-            reveal: Tween::new(1.0, NAV_TAU),
             held: None,
             held_secs: 0.0,
             focused: false,
             bounds: Rect::new(0.0, 0.0, 0.0, 0.0),
             full_height,
+            slot_top: 0.0,
         }
     }
 
@@ -59,23 +59,6 @@ impl BannerCarousel {
         }
     }
 
-    pub fn reveal_value(&self) -> f32 {
-        self.reveal.value()
-    }
-
-    pub fn reveal_target(&self) -> f32 {
-        self.reveal.target()
-    }
-
-    pub fn set_revealed(&mut self, shown: bool) {
-        self.reveal.set_target(if shown { 1.0 } else { 0.0 });
-        if !shown {
-            self.focused = false;
-            self.held = None;
-            self.held_secs = 0.0;
-        }
-    }
-
     pub fn set_full_height(&mut self, h: f32) {
         self.full_height = h;
     }
@@ -84,10 +67,13 @@ impl BannerCarousel {
         self.pages.step(delta, page_count);
     }
 
-    /// Place the overlay at `origin` with height `full_height * reveal`.
-    pub fn layout_overlay(&mut self, origin: Rect) {
-        let h = self.full_height * self.reveal.value();
-        self.bounds = Rect::new(origin.x, origin.y, origin.w, h);
+    /// Place the overlay at `origin`, shifted up by `scroll_offset` (design px).
+    ///
+    /// `scroll_offset` is typically `anim_rail * rail_step` from the rail list.
+    pub fn layout_overlay(&mut self, origin: Rect, scroll_offset: f32) {
+        self.slot_top = origin.y;
+        let y = origin.y - scroll_offset.max(0.0);
+        self.bounds = Rect::new(origin.x, y, origin.w, self.full_height);
     }
 
     fn chain_held(&mut self, dt: f32, page_count: usize) {
@@ -106,7 +92,8 @@ impl BannerCarousel {
     }
 
     fn paint(&self, r: &mut dyn Renderer, slides: &[BannerSlide]) {
-        if self.bounds.h <= 0.5 || slides.is_empty() {
+        // Fully scrolled above the resting slot (under the nav).
+        if self.bounds.bottom() <= self.slot_top + 0.5 || slides.is_empty() {
             return;
         }
         let (bx, by, bw, bh) = self.bounds.as_i32();
@@ -138,7 +125,7 @@ impl BannerCarousel {
             r.fill_rect(xi, by, bw, bh, theme::CARD_BG);
             // Upload under the renderer's per-frame budget so neighbors can fill
             // in during the slide instead of popping only after settle.
-            r.draw_image(xi, by, bw, bh, url);
+            r.draw_image(xi, by, bw, bh, url, 0);
         }
 
         // Dots — bottom-left inside bounds.
@@ -161,7 +148,7 @@ impl BannerCarousel {
 
         if self.focused {
             // Ring grows outward from the banner edge.
-            card::draw_focus_ring_strong(r, self.bounds);
+            card::draw_focus_ring_strong(r, self.bounds, 0);
         }
     }
 }
@@ -181,7 +168,6 @@ impl Widget for BannerCarousel {
         let n = ctx.catalog.banners.len();
         self.chain_held(dt, n);
         self.pages.normalize(n);
-        self.reveal.step(dt);
     }
 
     fn render(&self, r: &mut dyn Renderer, ctx: &Ctx) {

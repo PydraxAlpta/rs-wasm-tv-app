@@ -19,8 +19,11 @@ use web_sys::{
 
 const CIRCLE_SEGMENTS: i32 = 64;
 const FLOATS_PER_VERT: usize = 6;
-const FLOATS_PER_TEX_VERT: usize = 4; // x, y, u, v
-const FLOATS_PER_INSTANCE: usize = 5; // x, y, w, h, layer
+const FLOATS_PER_TEX_VERT: usize = 7; // x, y, u, v, size_w, size_h, radius
+const FLOATS_PER_INSTANCE: usize = 6; // x, y, w, h, layer, radius
+/// Instanced SDF round-rect: x, y, w, h, radius, stroke_width, r, g, b, a.
+/// `stroke_width == 0` → filled; otherwise a ring of that thickness in px.
+const FLOATS_PER_ROUND: usize = 10;
 /// GPU texture (VRAM) budget: visible rails + prefetch window, no placeholder
 /// flashes during motion. Kept smaller than the decoded-image cache
 /// (`super::image_cache::IMAGE_CACHE_CAP`) — VRAM is the scarce resource on a TV.
@@ -80,7 +83,11 @@ precision highp float;
 uniform vec2 u_resolution;
 layout(location = 0) in vec2 a_pos;
 layout(location = 1) in vec2 a_uv;
+layout(location = 2) in vec2 a_size;
+layout(location = 3) in float a_radius;
 out vec2 v_uv;
+out vec2 v_size;
+out float v_radius;
 void main() {
     vec2 ndc = vec2(
         (a_pos.x / u_resolution.x) * 2.0 - 1.0,
@@ -88,6 +95,8 @@ void main() {
     );
     gl_Position = vec4(ndc, 0.0, 1.0);
     v_uv = a_uv;
+    v_size = a_size;
+    v_radius = a_radius;
 }
 "#;
 
@@ -95,9 +104,26 @@ const TEX_FRAG_SRC: &str = r#"#version 300 es
 precision highp float;
 uniform sampler2D u_tex;
 in vec2 v_uv;
+in vec2 v_size;
+in float v_radius;
 out vec4 frag_color;
+float sdRoundBox(vec2 p, vec2 b, float r) {
+    vec2 q = abs(p) - b + r;
+    return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
+}
 void main() {
-    frag_color = texture(u_tex, v_uv);
+    vec4 tex = texture(u_tex, v_uv);
+    if (v_radius < 0.5) {
+        frag_color = tex;
+        return;
+    }
+    // v=1 at top (UNPACK_FLIP_Y); convert UV → design-local centered coords.
+    vec2 from_tl = vec2(v_uv.x, 1.0 - v_uv.y) * v_size;
+    vec2 p = from_tl - 0.5 * v_size;
+    float r = min(v_radius, min(v_size.x, v_size.y) * 0.5);
+    float sd = sdRoundBox(p, v_size * 0.5, r);
+    float alpha = 1.0 - smoothstep(-0.75, 0.75, sd);
+    frag_color = vec4(tex.rgb, tex.a * alpha);
 }
 "#;
 
@@ -107,8 +133,11 @@ uniform vec2 u_resolution;
 layout(location = 0) in vec2 a_pos;
 layout(location = 1) in vec4 a_rect;
 layout(location = 2) in float a_layer;
+layout(location = 3) in float a_radius;
 out vec2 v_uv;
 out float v_layer;
+out vec2 v_size;
+out float v_radius;
 void main() {
     vec2 p = a_rect.xy + a_pos * a_rect.zw;
     vec2 ndc = vec2(
@@ -119,6 +148,8 @@ void main() {
     // UNPACK_FLIP_Y on upload → top of dest uses v=1.
     v_uv = vec2(a_pos.x, 1.0 - a_pos.y);
     v_layer = a_layer;
+    v_size = a_rect.zw;
+    v_radius = a_radius;
 }
 "#;
 
@@ -127,9 +158,81 @@ precision highp float;
 uniform highp sampler2DArray u_atlas;
 in vec2 v_uv;
 in float v_layer;
+in vec2 v_size;
+in float v_radius;
 out vec4 frag_color;
+float sdRoundBox(vec2 p, vec2 b, float r) {
+    vec2 q = abs(p) - b + r;
+    return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
+}
 void main() {
-    frag_color = texture(u_atlas, vec3(v_uv, v_layer));
+    vec4 tex = texture(u_atlas, vec3(v_uv, v_layer));
+    if (v_radius < 0.5) {
+        frag_color = tex;
+        return;
+    }
+    vec2 from_tl = vec2(v_uv.x, 1.0 - v_uv.y) * v_size;
+    vec2 p = from_tl - 0.5 * v_size;
+    float r = min(v_radius, min(v_size.x, v_size.y) * 0.5);
+    float sd = sdRoundBox(p, v_size * 0.5, r);
+    float alpha = 1.0 - smoothstep(-0.75, 0.75, sd);
+    frag_color = vec4(tex.rgb, tex.a * alpha);
+}
+"#;
+
+const ROUND_VERT_SRC: &str = r#"#version 300 es
+precision highp float;
+uniform vec2 u_resolution;
+layout(location = 0) in vec2 a_pos;
+layout(location = 1) in vec4 a_rect;
+layout(location = 2) in float a_radius;
+layout(location = 3) in float a_stroke;
+layout(location = 4) in vec4 a_color;
+out vec2 v_local;
+out vec2 v_half;
+out float v_radius;
+out float v_stroke;
+out vec4 v_color;
+void main() {
+    // Pad the quad so the soft AA fringe (and stroke half-width) isn't clipped.
+    float pad = max(a_stroke * 0.5, 0.0) + 1.25;
+    vec2 halfSize = a_rect.zw * 0.5;
+    vec2 center = a_rect.xy + halfSize;
+    vec2 local = (a_pos * 2.0 - 1.0) * (halfSize + pad);
+    vec2 world = center + local;
+    vec2 ndc = vec2(
+        (world.x / u_resolution.x) * 2.0 - 1.0,
+        1.0 - (world.y / u_resolution.y) * 2.0
+    );
+    gl_Position = vec4(ndc, 0.0, 1.0);
+    v_local = local;
+    v_half = halfSize;
+    v_radius = a_radius;
+    v_stroke = a_stroke;
+    v_color = a_color;
+}
+"#;
+
+const ROUND_FRAG_SRC: &str = r#"#version 300 es
+precision highp float;
+in vec2 v_local;
+in vec2 v_half;
+in float v_radius;
+in float v_stroke;
+in vec4 v_color;
+out vec4 frag_color;
+float sdRoundBox(vec2 p, vec2 b, float r) {
+    vec2 q = abs(p) - b + r;
+    return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
+}
+void main() {
+    float r = min(v_radius, min(v_half.x, v_half.y));
+    float sd = sdRoundBox(v_local, v_half, r);
+    // stroke > 0 → annular distance field; else filled interior.
+    float d = v_stroke > 0.5 ? abs(sd) - v_stroke * 0.5 : sd;
+    float alpha = 1.0 - smoothstep(-0.75, 0.75, d);
+    // Keep RGB non-premultiplied — blend is SRC_ALPHA / ONE_MINUS_SRC_ALPHA.
+    frag_color = vec4(v_color.rgb, v_color.a * alpha);
 }
 "#;
 
@@ -160,6 +263,11 @@ pub struct WebGl2Renderer {
     layer_h: i32,
     /// Scratch canvas for resampling sources into `layer_w×layer_h`.
     layer_scratch: Option<(HtmlCanvasElement, CanvasRenderingContext2d)>,
+    /// Soft-edged fill/stroke round-rects (focus rings, card chrome).
+    round_program: WebGlProgram,
+    round_vao: WebGlVertexArrayObject,
+    round_instance_vbo: WebGlBuffer,
+    round_resolution_uniform: WebGlUniformLocation,
     textures: LruCache<String, WebGlTexture>,
     /// Cached rasterized system-font text → (texture, width, height).
     text_textures: LruCache<String, (WebGlTexture, i32, i32)>,
@@ -168,6 +276,7 @@ pub struct WebGl2Renderer {
     height: f32,
     line_verts: Vec<f32>,
     tri_verts: Vec<f32>,
+    round_instances: Vec<f32>,
     /// Cap on new texture uploads per frame (from config).
     image_uploads_per_frame: u32,
     /// Remaining new texture uploads allowed this frame (reset in `begin_frame`).
@@ -237,6 +346,10 @@ impl WebGl2Renderer {
         gl.vertex_attrib_pointer_with_i32(0, 2, WebGl2RenderingContext::FLOAT, false, tex_stride, 0);
         gl.enable_vertex_attrib_array(1);
         gl.vertex_attrib_pointer_with_i32(1, 2, WebGl2RenderingContext::FLOAT, false, tex_stride, 8);
+        gl.enable_vertex_attrib_array(2);
+        gl.vertex_attrib_pointer_with_i32(2, 2, WebGl2RenderingContext::FLOAT, false, tex_stride, 16);
+        gl.enable_vertex_attrib_array(3);
+        gl.vertex_attrib_pointer_with_i32(3, 1, WebGl2RenderingContext::FLOAT, false, tex_stride, 24);
         gl.bind_vertex_array(None);
         gl.bind_buffer(WebGl2RenderingContext::ARRAY_BUFFER, None);
 
@@ -344,6 +457,98 @@ impl WebGl2Renderer {
             16,
         );
         gl.vertex_attrib_divisor(2, 1);
+        gl.enable_vertex_attrib_array(3);
+        gl.vertex_attrib_pointer_with_i32(
+            3,
+            1,
+            WebGl2RenderingContext::FLOAT,
+            false,
+            inst_stride,
+            20,
+        );
+        gl.vertex_attrib_divisor(3, 1);
+        gl.bind_vertex_array(None);
+        gl.bind_buffer(WebGl2RenderingContext::ARRAY_BUFFER, None);
+
+        let round_vert =
+            compile_shader(&gl, WebGl2RenderingContext::VERTEX_SHADER, ROUND_VERT_SRC)
+                .unwrap_or_else(|e| wasm_bindgen::throw_str(&e));
+        let round_frag =
+            compile_shader(&gl, WebGl2RenderingContext::FRAGMENT_SHADER, ROUND_FRAG_SRC)
+                .unwrap_or_else(|e| wasm_bindgen::throw_str(&e));
+        let round_program = link_program(&gl, &round_vert, &round_frag)
+            .unwrap_or_else(|e| wasm_bindgen::throw_str(&e));
+        let round_resolution_uniform = gl
+            .get_uniform_location(&round_program, "u_resolution")
+            .expect_throw("u_resolution uniform missing");
+
+        let round_vao = gl
+            .create_vertex_array()
+            .expect_throw("Failed to create round VAO");
+        let round_quad_vbo = gl
+            .create_buffer()
+            .expect_throw("Failed to create round quad VBO");
+        let round_instance_vbo = gl
+            .create_buffer()
+            .expect_throw("Failed to create round instance VBO");
+        gl.bind_vertex_array(Some(&round_vao));
+        gl.bind_buffer(WebGl2RenderingContext::ARRAY_BUFFER, Some(&round_quad_vbo));
+        let round_quad_data = Float32Array::new_with_length(unit_quad.len() as u32);
+        round_quad_data.copy_from(&unit_quad);
+        gl.buffer_data_with_array_buffer_view(
+            WebGl2RenderingContext::ARRAY_BUFFER,
+            &round_quad_data,
+            WebGl2RenderingContext::STATIC_DRAW,
+        );
+        gl.enable_vertex_attrib_array(0);
+        gl.vertex_attrib_pointer_with_i32(0, 2, WebGl2RenderingContext::FLOAT, false, 0, 0);
+        gl.vertex_attrib_divisor(0, 0);
+
+        gl.bind_buffer(
+            WebGl2RenderingContext::ARRAY_BUFFER,
+            Some(&round_instance_vbo),
+        );
+        let round_stride = (FLOATS_PER_ROUND * 4) as i32;
+        gl.enable_vertex_attrib_array(1);
+        gl.vertex_attrib_pointer_with_i32(
+            1,
+            4,
+            WebGl2RenderingContext::FLOAT,
+            false,
+            round_stride,
+            0,
+        );
+        gl.vertex_attrib_divisor(1, 1);
+        gl.enable_vertex_attrib_array(2);
+        gl.vertex_attrib_pointer_with_i32(
+            2,
+            1,
+            WebGl2RenderingContext::FLOAT,
+            false,
+            round_stride,
+            16,
+        );
+        gl.vertex_attrib_divisor(2, 1);
+        gl.enable_vertex_attrib_array(3);
+        gl.vertex_attrib_pointer_with_i32(
+            3,
+            1,
+            WebGl2RenderingContext::FLOAT,
+            false,
+            round_stride,
+            20,
+        );
+        gl.vertex_attrib_divisor(3, 1);
+        gl.enable_vertex_attrib_array(4);
+        gl.vertex_attrib_pointer_with_i32(
+            4,
+            4,
+            WebGl2RenderingContext::FLOAT,
+            false,
+            round_stride,
+            24,
+        );
+        gl.vertex_attrib_divisor(4, 1);
         gl.bind_vertex_array(None);
         gl.bind_buffer(WebGl2RenderingContext::ARRAY_BUFFER, None);
 
@@ -360,6 +565,8 @@ impl WebGl2Renderer {
         gl.use_program(Some(&array_program));
         gl.uniform2f(Some(&array_resolution_uniform), width, height);
         gl.uniform1i(Some(&array_uniform), 0);
+        gl.use_program(Some(&round_program));
+        gl.uniform2f(Some(&round_resolution_uniform), width, height);
         gl.use_program(None);
 
         Self {
@@ -384,6 +591,10 @@ impl WebGl2Renderer {
             layer_w,
             layer_h,
             layer_scratch: None,
+            round_program,
+            round_vao,
+            round_instance_vbo,
+            round_resolution_uniform,
             textures: LruCache::new(NonZeroUsize::new(IMAGE_TEX_CAP).expect("cap > 0")),
             text_textures: LruCache::new(NonZeroUsize::new(TEXT_TEX_CAP).expect("cap > 0")),
             images,
@@ -391,6 +602,7 @@ impl WebGl2Renderer {
             height,
             line_verts: Vec::new(),
             tri_verts: Vec::new(),
+            round_instances: Vec::new(),
             image_uploads_per_frame: config.image_uploads_per_frame,
             uploads_remaining: config.image_uploads_per_frame,
         }
@@ -424,6 +636,12 @@ impl WebGl2Renderer {
             self.width,
             self.height,
         );
+        self.gl.use_program(Some(&self.round_program));
+        self.gl.uniform2f(
+            Some(&self.round_resolution_uniform),
+            self.width,
+            self.height,
+        );
         self.gl.use_program(None);
     }
 
@@ -437,21 +655,77 @@ impl WebGl2Renderer {
     }
 
     fn push_line(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, color: Color) {
+        self.flush_round_batch();
         Self::push_vert(&mut self.line_verts, x0 as f32, y0 as f32, color);
         Self::push_vert(&mut self.line_verts, x1 as f32, y1 as f32, color);
     }
 
     fn push_tri(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, x2: i32, y2: i32, color: Color) {
+        self.flush_round_batch();
         Self::push_vert(&mut self.tri_verts, x0 as f32, y0 as f32, color);
         Self::push_vert(&mut self.tri_verts, x1 as f32, y1 as f32, color);
         Self::push_vert(&mut self.tri_verts, x2 as f32, y2 as f32, color);
     }
 
-    fn flush_color_batches(&mut self) {
+    fn push_round_rect(
+        &mut self,
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+        radius: i32,
+        stroke_width: f32,
+        color: Color,
+    ) {
+        if width <= 0 || height <= 0 {
+            return;
+        }
+        // Preserve order when interleaved with flat-coloured tris/lines.
+        self.flush_flat_color_batches();
+        let r = tv_ui::clamp_corner_radius(width, height, radius) as f32;
+        self.round_instances.push(x as f32);
+        self.round_instances.push(y as f32);
+        self.round_instances.push(width as f32);
+        self.round_instances.push(height as f32);
+        self.round_instances.push(r);
+        self.round_instances.push(stroke_width);
+        self.round_instances.push(f32::from(color.r) / 255.0);
+        self.round_instances.push(f32::from(color.g) / 255.0);
+        self.round_instances.push(f32::from(color.b) / 255.0);
+        self.round_instances.push(f32::from(color.a) / 255.0);
+    }
+
+    fn flush_flat_color_batches(&mut self) {
         self.flush_batch(&self.tri_verts, WebGl2RenderingContext::TRIANGLES);
         self.flush_batch(&self.line_verts, WebGl2RenderingContext::LINES);
         self.tri_verts.clear();
         self.line_verts.clear();
+    }
+
+    fn flush_round_batch(&mut self) {
+        let count = (self.round_instances.len() / FLOATS_PER_ROUND) as i32;
+        if count <= 0 {
+            return;
+        }
+        let byte_offset = self.round_instances.as_ptr() as u32;
+        let float_count = self.round_instances.len() as u32;
+        let memory = gl_helpers::memory();
+        gl_helpers::draw_round_instances(
+            &self.gl,
+            &self.round_program,
+            &self.round_vao,
+            &self.round_instance_vbo,
+            &memory,
+            byte_offset,
+            float_count,
+            count,
+        );
+        self.round_instances.clear();
+    }
+
+    fn flush_color_batches(&mut self) {
+        self.flush_flat_color_batches();
+        self.flush_round_batch();
     }
 
     fn flush_batch(&self, verts: &[f32], mode: u32) {
@@ -491,13 +765,13 @@ impl WebGl2Renderer {
         Some(texture)
     }
 
-    fn draw_textured_quad(&mut self, x: i32, y: i32, w: i32, h: i32, url: &str) {
+    fn draw_textured_quad(&mut self, x: i32, y: i32, w: i32, h: i32, url: &str, radius: i32) {
         // Prefer an existing GL texture even if the HTML image was LRU-evicted.
         if let Some(texture) = self.textures.get(url).cloned() {
             // Keep the decoded source warm so it outlives its texture (re-upload
             // without a refetch). Promote-if-present — never starts a load.
             ImageCache::touch(&self.images, url);
-            self.draw_texture_quad(x, y, w, h, &texture);
+            self.draw_texture_quad(x, y, w, h, &texture, radius);
             return;
         }
 
@@ -507,23 +781,35 @@ impl WebGl2Renderer {
         let Some(texture) = self.texture_for(url, &image) else {
             return;
         };
-        self.draw_texture_quad(x, y, w, h, &texture);
+        self.draw_texture_quad(x, y, w, h, &texture, radius);
     }
 
-    fn draw_texture_quad(&self, x: i32, y: i32, w: i32, h: i32, texture: &WebGlTexture) {
+    fn draw_texture_quad(
+        &self,
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+        texture: &WebGlTexture,
+        radius: i32,
+    ) {
         let x0 = x as f32;
         let y0 = y as f32;
         let x1 = (x + w) as f32;
         let y1 = (y + h) as f32;
+        let sw = w as f32;
+        let sh = h as f32;
+        let rad = tv_ui::clamp_corner_radius(w, h, radius) as f32;
         // Two triangles; UVs with v=0 at bottom after UNPACK_FLIP_Y.
         // Positions are design pixels; the VS maps them to NDC.
-        let verts: [f32; 24] = [
-            x0, y0, 0.0, 1.0, //
-            x1, y0, 1.0, 1.0, //
-            x0, y1, 0.0, 0.0, //
-            x0, y1, 0.0, 0.0, //
-            x1, y0, 1.0, 1.0, //
-            x1, y1, 1.0, 0.0,
+        // Per-vert: x, y, u, v, size_w, size_h, radius
+        let verts: [f32; 42] = [
+            x0, y0, 0.0, 1.0, sw, sh, rad, //
+            x1, y0, 1.0, 1.0, sw, sh, rad, //
+            x0, y1, 0.0, 0.0, sw, sh, rad, //
+            x0, y1, 0.0, 0.0, sw, sh, rad, //
+            x1, y0, 1.0, 1.0, sw, sh, rad, //
+            x1, y1, 1.0, 0.0, sw, sh, rad,
         ];
 
         let byte_offset = verts.as_ptr() as u32;
@@ -685,6 +971,7 @@ impl WebGl2Renderer {
             instances.push(img.w as f32);
             instances.push(img.h as f32);
             instances.push(layer as f32);
+            instances.push(tv_ui::clamp_corner_radius(img.w, img.h, img.radius) as f32);
         }
         let count = (instances.len() / FLOATS_PER_INSTANCE) as i32;
         self.draw_array_instances(&instances, count);
@@ -729,6 +1016,7 @@ impl Renderer for WebGl2Renderer {
     fn begin_frame(&mut self, clear: Color) {
         self.line_verts.clear();
         self.tri_verts.clear();
+        self.round_instances.clear();
         self.uploads_remaining = self.image_uploads_per_frame;
         gl_helpers::begin_frame(
             &self.gl,
@@ -803,16 +1091,24 @@ impl Renderer for WebGl2Renderer {
         self.push_tri(x0, y0, x1, y1, x2, y2, color);
     }
 
-    fn draw_image(&mut self, x: i32, y: i32, width: i32, height: i32, url: &str) {
+    fn draw_image(&mut self, x: i32, y: i32, width: i32, height: i32, url: &str, radius: i32) {
         if width <= 0 || height <= 0 {
             return;
         }
         // Preserve draw order relative to batched vector shapes.
         self.flush_color_batches();
-        self.draw_textured_quad(x, y, width, height, url);
+        self.draw_textured_quad(x, y, width, height, url, radius);
     }
 
-    fn draw_image_cached(&mut self, x: i32, y: i32, width: i32, height: i32, url: &str) {
+    fn draw_image_cached(
+        &mut self,
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+        url: &str,
+        radius: i32,
+    ) {
         if width <= 0 || height <= 0 {
             return;
         }
@@ -823,7 +1119,7 @@ impl Renderer for WebGl2Renderer {
         // Keep the decoded source warm even while drawing cached-only during motion.
         ImageCache::touch(&self.images, url);
         self.flush_color_batches();
-        self.draw_texture_quad(x, y, width, height, &texture);
+        self.draw_texture_quad(x, y, width, height, &texture, radius);
     }
 
     fn draw_images(&mut self, images: &[ImageBlit<'_>]) {
@@ -847,7 +1143,7 @@ impl Renderer for WebGl2Renderer {
         let Some((texture, w, h)) = self.text_texture_for(size, color, text) else {
             return;
         };
-        self.draw_texture_quad(x, y, w, h, &texture);
+        self.draw_texture_quad(x, y, w, h, &texture, 0);
     }
 
     fn set_clip(&mut self, clip: Option<tv_ui::geom::Rect>) {
@@ -866,6 +1162,32 @@ impl Renderer for WebGl2Renderer {
                 gl_helpers::set_clip(&self.gl, false, 0, 0, 0, 0);
             }
         }
+    }
+
+    fn fill_round_rect(
+        &mut self,
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+        radius: i32,
+        color: Color,
+    ) {
+        self.push_round_rect(x, y, width, height, radius, 0.0, color);
+    }
+
+    fn stroke_round_rect(
+        &mut self,
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+        radius: i32,
+        color: Color,
+    ) {
+        // Wide enough that the SDF core reaches alpha≈1 after smoothstep AA
+        // (~1.5px fringe); thinner strokes looked washed-out vs hard GL_LINES.
+        self.push_round_rect(x, y, width, height, radius, 2.0, color);
     }
 }
 

@@ -136,6 +136,7 @@ fn embed_metrics() -> Metrics {
         card_w: 75.0,
         card_h,
         card_gap: 10.0,
+        card_radius: 12.0,
         rail_title_h,
         rail_step: card_h + rail_title_h + 55.0,
         focus_x: 24.0,

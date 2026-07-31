@@ -5,39 +5,48 @@ use crate::renderer::Renderer;
 use crate::theme;
 
 /// Draw a poster tile: placeholder, image, border.
-pub fn draw_card(r: &mut dyn Renderer, rect: Rect, image_url: &str) {
-    draw_card_bg(r, rect);
+pub fn draw_card(r: &mut dyn Renderer, rect: Rect, image_url: &str, radius: i32) {
+    draw_card_bg(r, rect, radius);
     let (x, y, w, h) = rect.as_i32();
-    r.draw_image(x, y, w, h, image_url);
-    draw_card_border(r, rect);
+    r.draw_image(x, y, w, h, image_url, radius);
+    draw_card_border(r, rect, radius);
 }
 
 /// Placeholder fill only (for batched row draws).
-pub fn draw_card_bg(r: &mut dyn Renderer, rect: Rect) {
+pub fn draw_card_bg(r: &mut dyn Renderer, rect: Rect, radius: i32) {
     let (x, y, w, h) = rect.as_i32();
-    r.fill_rect(x, y, w, h, theme::CARD_BG);
+    r.fill_round_rect(x, y, w, h, radius, theme::CARD_BG);
 }
 
 /// Border only (for batched row draws).
-pub fn draw_card_border(r: &mut dyn Renderer, rect: Rect) {
+pub fn draw_card_border(r: &mut dyn Renderer, rect: Rect, radius: i32) {
     let (x, y, w, h) = rect.as_i32();
-    r.stroke_rect(x, y, w, h, theme::CARD_BORDER);
+    r.stroke_round_rect(x, y, w, h, radius, theme::CARD_BORDER);
 }
 
 /// Multi-layer focus stroke used by cards and the hero banner.
-pub fn draw_focus_ring(r: &mut dyn Renderer, rect: Rect) {
-    draw_focus_ring_layers(r, rect, 4);
+pub fn draw_focus_ring(r: &mut dyn Renderer, rect: Rect, radius: i32) {
+    draw_focus_ring_layers(r, rect, radius, 4);
 }
 
 /// Stronger ring for large surfaces (e.g. the hero banner).
-pub fn draw_focus_ring_strong(r: &mut dyn Renderer, rect: Rect) {
-    draw_focus_ring_layers(r, rect, 7);
+pub fn draw_focus_ring_strong(r: &mut dyn Renderer, rect: Rect, radius: i32) {
+    draw_focus_ring_layers(r, rect, radius, 7);
 }
 
-fn draw_focus_ring_layers(r: &mut dyn Renderer, rect: Rect, layers: i32) {
+fn draw_focus_ring_layers(r: &mut dyn Renderer, rect: Rect, radius: i32, layers: i32) {
     let (x, y, w, h) = rect.as_i32();
     for i in 0..layers {
-        let a = 220u8.saturating_sub(i as u8 * 28);
-        r.stroke_rect(x - i, y - i, w + 2 * i, h + 2 * i, theme::FOCUS.with_alpha(a));
+        // Full opacity: the WebGL SDF path blends, and translucent FOCUS over
+        // dark cards reads much darker than the old unblended `stroke_rect` lines
+        // (which wrote full RGB regardless of the alpha channel).
+        r.stroke_round_rect(
+            x - i,
+            y - i,
+            w + 2 * i,
+            h + 2 * i,
+            radius + i,
+            theme::FOCUS,
+        );
     }
 }

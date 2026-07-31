@@ -128,6 +128,35 @@ export function drawArrayInstances(
   gl.disable(gl.BLEND);
 }
 
+/**
+ * Instanced SDF round-rects (fill or stroke): blend on, upload instance attrs
+ * from wasm, drawArraysInstanced, tear down. No texture.
+ */
+export function drawRoundInstances(
+  gl: WebGL2RenderingContext,
+  program: WebGLProgram,
+  vao: WebGLVertexArrayObject,
+  instanceVbo: WebGLBuffer,
+  memory: WebAssembly.Memory,
+  byteOffset: number,
+  floatCount: number,
+  instanceCount: number,
+): void {
+  if (instanceCount <= 0) return;
+
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+  gl.useProgram(program);
+  gl.bindVertexArray(vao);
+  gl.bindBuffer(gl.ARRAY_BUFFER, instanceVbo);
+  bufferDataFromWasm(gl, memory, byteOffset, floatCount);
+  gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, instanceCount);
+
+  gl.bindVertexArray(null);
+  gl.disable(gl.BLEND);
+}
+
 /** Clear colour buffer; scissor off. `r/g/b/a` are 0–1. */
 export function beginFrame(
   gl: WebGL2RenderingContext,

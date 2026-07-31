@@ -24,7 +24,7 @@ pub struct RailList {
     held: Option<Key>,
     /// Seconds the current `held` key has been down.
     held_secs: f32,
-    /// Extra top inset so rail 0 sits below the overlay banner while it is shown.
+    /// Extra top inset so rail 0 sits below the overlay banner.
     banner_pad: f32,
     /// How many catalog rails are currently available (lazy batches of [`RAIL_BATCH`]).
     loaded_rails: usize,
@@ -79,6 +79,21 @@ impl RailList {
         self.anim_rail.is_settled()
     }
 
+    /// Current fractional rail scroll (drives banner + row positions).
+    pub fn anim_rail_value(&self) -> f32 {
+        self.anim_rail.value()
+    }
+
+    /// Vertical content scroll in design px shared by the banner overlay.
+    ///
+    /// Includes an extra [`Metrics::banner_h`] ramp over the first rail step so
+    /// that once past rail 0 the focus anchor sits where it did when the banner
+    /// used to collapse (higher on screen).
+    pub fn content_scroll_px(&self, metrics: &crate::metrics::Metrics) -> f32 {
+        let anim = self.anim_rail.value();
+        anim * metrics.rail_step + anim.clamp(0.0, 1.0) * metrics.banner_h
+    }
+
     /// True when the vertical tween is close enough to chain or cross a focus edge.
     pub fn vertical_near_settle(&self) -> bool {
         (self.anim_rail.target() - self.anim_rail.value()).abs() < CHAIN_THRESHOLD
@@ -97,7 +112,9 @@ impl RailList {
         self.held_secs = HOLD_SCROLL_DELAY;
     }
 
-    /// Space reserved under the overlay banner (follows banner reveal).
+    /// Space reserved under the overlay banner (typically top pad + banner height).
+    ///
+    /// Stays fixed while `anim_rail` scrolls banner + rails together.
     pub fn set_banner_pad(&mut self, pad: f32) {
         self.banner_pad = pad.max(0.0);
     }
@@ -132,7 +149,10 @@ impl RailList {
     }
 
     fn focus_card_y(&self, ctx: &Ctx) -> f32 {
-        self.bounds.y + self.banner_pad + ctx.metrics.rail_title_h + 8.0
+        // As anim_rail crosses 0→1, lift the focus anchor by banner_h so rails
+        // 1+ land where they did after the old banner-collapse pad shrink.
+        let clear = self.anim_rail.value().clamp(0.0, 1.0) * ctx.metrics.banner_h;
+        self.bounds.y + self.banner_pad + ctx.metrics.rail_title_h + 8.0 - clear
     }
 
     fn move_to_rail(&mut self, rail: usize) {
@@ -374,7 +394,7 @@ impl Widget for RailList {
 
         if self.focused {
             let focus_rect = Rect::new(self.bounds.x, focus_y, card_w, card_h);
-            card::draw_focus_ring(r, focus_rect);
+            card::draw_focus_ring(r, focus_rect, m.card_radius.round() as i32);
         }
     }
 

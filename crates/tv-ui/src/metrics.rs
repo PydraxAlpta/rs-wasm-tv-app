@@ -11,6 +11,8 @@ pub struct Metrics {
     pub card_w: f32,
     pub card_h: f32,
     pub card_gap: f32,
+    /// Corner radius (design px) for rail cards, posters, and their focus rings.
+    pub card_radius: f32,
     pub rail_title_h: f32,
     pub rail_step: f32,
     /// Left edge of the fixed leanback focus card slot (within content).
@@ -34,6 +36,7 @@ impl Default for Metrics {
             card_w,
             card_h,
             card_gap: 24.0,
+            card_radius: 32.0,
             rail_title_h,
             rail_step: rail_title_h + card_h + 56.0 + 36.0,
             focus_x: safe_margin,

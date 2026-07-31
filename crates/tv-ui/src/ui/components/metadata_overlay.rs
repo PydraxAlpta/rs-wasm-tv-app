@@ -129,7 +129,7 @@ impl Widget for MetadataOverlay {
         let margin = ctx.metrics.safe_margin;
         let content_top = page.y + margin * 1.2;
         let poster = Rect::new(page.x + margin, content_top, POSTER_W, POSTER_H);
-        card::draw_card(r, poster, &item.image_url);
+        card::draw_card(r, poster, &item.image_url, ctx.metrics.card_radius.round() as i32);
 
         let text_x = (poster.right() + 56.0) as i32;
         let text_right = (page.right() - margin) as i32;
@@ -190,7 +190,7 @@ impl Widget for MetadataOverlay {
         let (bx, by, bw, bh) = btn.as_i32();
         r.fill_rect(bx, by, bw, bh, theme::FOCUS);
         r.draw_text(bx + 56, by + 18, 34, theme::BG, "▶  Play");
-        card::draw_focus_ring(r, btn);
+        card::draw_focus_ring(r, btn, 0);
 
         r.draw_text(
             bx + bw + 32,

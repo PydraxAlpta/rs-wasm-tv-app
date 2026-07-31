@@ -55,6 +55,18 @@ extern "C" {
         instance_count: i32,
     );
 
+    #[wasm_bindgen(js_name = drawRoundInstances)]
+    pub fn draw_round_instances(
+        gl: &WebGl2RenderingContext,
+        program: &WebGlProgram,
+        vao: &WebGlVertexArrayObject,
+        instance_vbo: &WebGlBuffer,
+        memory: &WebAssembly::Memory,
+        byte_offset: u32,
+        float_count: u32,
+        instance_count: i32,
+    );
+
     #[wasm_bindgen(js_name = beginFrame)]
     pub fn begin_frame(gl: &WebGl2RenderingContext, r: f32, g: f32, b: f32, a: f32);
 

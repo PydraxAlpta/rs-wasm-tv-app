@@ -15,6 +15,9 @@ use crate::ui::components::widget::{FocusResult, Widget};
 
 /// Pause on a focus zone before hold-traverse continues to the next zone.
 const BOUNDARY_DWELL: f32 = NAV_TAU;
+/// Gap below the nav so the banner's outward focus ring (strong = 7 layers)
+/// isn't covered by the nav's opaque fill. Matches max outset (6) + stroke/AA.
+const BANNER_TOP_PAD: f32 = 12.0;
 
 /// Result of routing a key into a catalog page.
 pub enum PageKeyResult {
@@ -80,10 +83,6 @@ impl CatalogPage {
         zone_from_index(self.scope.index()) == FocusZone::Banner
     }
 
-    pub fn banner_reveal_target(&self) -> f32 {
-        self.banner.reveal_target()
-    }
-
     pub fn overlay_open(&self) -> bool {
         self.overlay.is_open()
     }
@@ -117,7 +116,6 @@ impl CatalogPage {
             self.scope.set_index(index_from_zone(FocusZone::Banner));
         }
         self.sync_focus_flags();
-        self.sync_banner_reveal();
     }
 
     /// Begin hold-traverse after the shell moves focus into this page (e.g. nav Down).
@@ -148,10 +146,6 @@ impl CatalogPage {
         }
     }
 
-    fn sync_banner_reveal(&mut self) {
-        self.banner.set_revealed(self.rails.focus_rail() == 0);
-    }
-
     /// Place this page in the sliding strip. `page_x` is the left edge in design space.
     pub fn layout_in_strip(&mut self, ctx: &Ctx, page_x: f32, nav_h: f32) {
         let m = ctx.metrics;
@@ -170,19 +164,27 @@ impl CatalogPage {
         let rails = &mut self.rails as &mut dyn Widget;
         layout_column(content, 0.0, &mut [banner, rails]);
         // Banner is flex-zero; draw it as an overlay so rail bounds stay stable.
-        self.banner.layout_overlay(content);
-        self.rails
-            .set_banner_pad(m.banner_h * self.banner.reveal_value());
+        // Nudge down so the focus ring clearing the top edge isn't under the nav.
+        let banner_origin = Rect::new(
+            content.x,
+            content.y + BANNER_TOP_PAD,
+            content.w,
+            (content.h - BANNER_TOP_PAD).max(0.0),
+        );
+        // Same scroll as the rails — extra banner_h over the first step so the
+        // focus anchor rises once the hero has cleared.
+        let scroll = self.rails.content_scroll_px(&m);
+        self.banner.layout_overlay(banner_origin, scroll);
+        self.rails.set_banner_pad(BANNER_TOP_PAD + m.banner_h);
         // Overlay sits under the header so the nav stays visible.
         let overlay_bounds = Rect::new(page_x, nav_h, full_w, (full_h - nav_h).max(0.0));
         self.overlay.layout(overlay_bounds);
     }
 
     pub fn update(&mut self, dt: f32, ctx: &mut Ctx) {
-        self.sync_banner_reveal();
         self.banner.update(dt, ctx);
         self.rails
-            .set_banner_pad(ctx.metrics.banner_h * self.banner.reveal_value());
+            .set_banner_pad(BANNER_TOP_PAD + ctx.metrics.banner_h);
         self.rails.update(dt, ctx);
         self.overlay.update(dt, ctx);
         if !self.overlay.is_active() {
@@ -218,7 +220,6 @@ impl CatalogPage {
                         self.rails.set_held(None);
                         self.boundary_cooldown = BOUNDARY_DWELL;
                         self.sync_focus_flags();
-                        self.sync_banner_reveal();
                     }
                 }
             }
@@ -236,7 +237,6 @@ impl CatalogPage {
                     self.rails.arm_continuous_hold(Key::Down);
                     self.boundary_cooldown = BOUNDARY_DWELL;
                     self.sync_focus_flags();
-                    self.sync_banner_reveal();
                 }
             }
             (FocusZone::Rails, Key::Down) => {
@@ -311,7 +311,6 @@ impl CatalogPage {
             _ => PageKeyResult::None,
         };
         self.sync_focus_flags();
-        self.sync_banner_reveal();
         out
     }
 
@@ -491,7 +490,6 @@ mod tests {
             s.focus().0,
             crate::test_support::sample_catalog().rails.len() - 1
         );
-        assert!((s.banner_reveal_target() - 0.0).abs() < 1e-4);
     }
 
     #[test]
@@ -505,7 +503,6 @@ mod tests {
             s.handle_key(Key::Up, ctx);
         });
         assert_eq!(s.focus(), (0, 2));
-        assert!((s.banner_reveal_target() - 1.0).abs() < 1e-4);
     }
 
     #[test]

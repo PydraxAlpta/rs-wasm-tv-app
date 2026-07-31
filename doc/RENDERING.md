@@ -100,19 +100,21 @@ The array path resamples through a scratch canvas into the fixed layer size the 
 ### Avoiding decode / upload hitches
 
 Uploading many freshly-decoded posters in one frame causes a hitch on TV GPUs.
-Mitigations:
+Mitigation:
 
-- **Vertical rail motion:** `RailList` uses `draw_images_cached` — paint only array
-  layers already resident; prefetch still decodes in the background.
 - **Per-frame upload budget:** `WebGl2Renderer` allows at most
-  `IMAGE_UPLOADS_PER_FRAME` (2) new GPU uploads per `begin_frame`, shared by the
-  array and 2D image paths. Horizontal browse keeps `draw_images` (`All`) so
-  posters appear as they decode, but sprawl across frames instead of one spike.
+  `image_uploads_per_frame` new GPU uploads per `begin_frame` (default
+  [`DEFAULT_IMAGE_UPLOADS_PER_FRAME`](../crates/tv-ui-webgl/src/webgl2.rs) = 2),
+  shared by the array and 2D image paths. Configure via
+  [`WebGl2RendererConfig`](../crates/tv-ui-webgl/src/webgl2.rs) at construction
+  (or `set_image_uploads_per_frame` later). Vertical and horizontal browse both
+  use `draw_images` (`ImageDraw::All`) so posters appear as they decode, but
+  sprawl across frames instead of one spike.
 - Exact-size sources skip the scratch-canvas resample on array upload.
 
-Once `anim_rail.is_settled()`, full `draw_images` is used (`ImageDraw::All` vs
-`CachedOnly` in `carousel.rs`). The banner similarly guards slides via
-`draw_image_cached` during its motion.
+`ImageDraw::CachedOnly` / `draw_images_cached` remain available for callers that
+want resident-only draws; `RailList` no longer switches to them during vertical
+motion. The banner similarly can guard slides via `draw_image_cached` when needed.
 
 ## Text: rasterize on a 2D canvas, cache, upload
 

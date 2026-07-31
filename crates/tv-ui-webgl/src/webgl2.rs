@@ -24,12 +24,28 @@ const FLOATS_PER_INSTANCE: usize = 5; // x, y, w, h, layer
 /// (`super::image_cache::IMAGE_CACHE_CAP`) — VRAM is the scarce resource on a TV.
 /// Also the depth of the card `TEXTURE_2D_ARRAY`.
 const IMAGE_TEX_CAP: usize = 96;
-/// Max new GPU image uploads (`texSubImage3D` / `texImage2D`) per frame.
+/// Default max new GPU image uploads (`texSubImage3D` / `texImage2D`) per frame.
 /// Prefetch may decode many posters at once; amortizing uploads avoids TV hitches
-/// while still letting horizontal browse reveal images over subsequent frames.
-const IMAGE_UPLOADS_PER_FRAME: u32 = 2;
+/// while still letting browse reveal images over subsequent frames.
+pub const DEFAULT_IMAGE_UPLOADS_PER_FRAME: u32 = 2;
 /// Titles / metadata strings churn as focus moves; keep a larger text budget.
 const TEXT_TEX_CAP: usize = 192;
+
+/// Tunables for [`WebGl2Renderer`]. Unspecified fields use [`Default`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WebGl2RendererConfig {
+    /// Max new GPU image uploads per `begin_frame` (array + 2D paths share this).
+    /// `0` skips all new uploads for the frame (cached textures still draw).
+    pub image_uploads_per_frame: u32,
+}
+
+impl Default for WebGl2RendererConfig {
+    fn default() -> Self {
+        Self {
+            image_uploads_per_frame: DEFAULT_IMAGE_UPLOADS_PER_FRAME,
+        }
+    }
+}
 
 const VERT_SRC: &str = r#"#version 300 es
 precision highp float;
@@ -150,6 +166,8 @@ pub struct WebGl2Renderer {
     height: f32,
     line_verts: Vec<f32>,
     tri_verts: Vec<f32>,
+    /// Cap on new texture uploads per frame (from config).
+    image_uploads_per_frame: u32,
     /// Remaining new texture uploads allowed this frame (reset in `begin_frame`).
     uploads_remaining: u32,
 }
@@ -162,6 +180,7 @@ impl WebGl2Renderer {
         images: ImageCacheHandle,
         layer_w: u32,
         layer_h: u32,
+        config: WebGl2RendererConfig,
     ) -> Self {
         let layer_w = layer_w.max(1) as i32;
         let layer_h = layer_h.max(1) as i32;
@@ -370,8 +389,19 @@ impl WebGl2Renderer {
             height,
             line_verts: Vec::new(),
             tri_verts: Vec::new(),
-            uploads_remaining: IMAGE_UPLOADS_PER_FRAME,
+            image_uploads_per_frame: config.image_uploads_per_frame,
+            uploads_remaining: config.image_uploads_per_frame,
         }
+    }
+
+    /// Max new GPU image uploads allowed each frame.
+    pub fn image_uploads_per_frame(&self) -> u32 {
+        self.image_uploads_per_frame
+    }
+
+    /// Change the per-frame upload budget (takes effect on the next `begin_frame`).
+    pub fn set_image_uploads_per_frame(&mut self, n: u32) {
+        self.image_uploads_per_frame = n;
     }
 
     /// Update the drawing resolution and GL viewport (kept for future DPR work).
@@ -862,7 +892,7 @@ impl Renderer for WebGl2Renderer {
     fn begin_frame(&mut self, clear: Color) {
         self.line_verts.clear();
         self.tri_verts.clear();
-        self.uploads_remaining = IMAGE_UPLOADS_PER_FRAME;
+        self.uploads_remaining = self.image_uploads_per_frame;
         self.gl.disable(WebGl2RenderingContext::SCISSOR_TEST);
         self.gl.clear_color(
             f32::from(clear.r) / 255.0,

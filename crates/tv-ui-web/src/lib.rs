@@ -471,6 +471,7 @@ pub fn mount_carousels(
         images,
         metrics.card_w as u32,
         metrics.card_h as u32,
+        Default::default(),
     );
 
     let mut rail = RailList::new();

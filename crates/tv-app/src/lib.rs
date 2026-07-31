@@ -216,6 +216,7 @@ pub fn setup_app(root: HtmlElement, player: JsPlayer) {
         images,
         metrics.card_w as u32,
         metrics.card_h as u32,
+        Default::default(),
     );
     let perf_hud = query_el::<HtmlElement>(&root, "#perf-hud");
 

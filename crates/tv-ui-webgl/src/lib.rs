@@ -14,7 +14,9 @@ mod image_cache;
 mod webgl2;
 
 pub use image_cache::{ImageCache, ImageCacheHandle};
-pub use webgl2::WebGl2Renderer;
+pub use webgl2::{
+    WebGl2Renderer, WebGl2RendererConfig, DEFAULT_IMAGE_UPLOADS_PER_FRAME,
+};
 
 use wasm_bindgen::JsCast;
 use web_sys::{HtmlCanvasElement, WebGl2RenderingContext, WebGlContextAttributes};

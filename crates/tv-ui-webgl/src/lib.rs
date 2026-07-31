@@ -10,6 +10,7 @@
 //! `#[wasm_bindgen]` handle that mounts a `tv_ui` widget tree onto a caller's
 //! canvas without going through a full app); no such export exists yet.
 
+mod gl_helpers;
 mod image_cache;
 mod webgl2;
 

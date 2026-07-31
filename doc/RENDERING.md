@@ -70,6 +70,16 @@ This ordering is why `draw_card_row` (`carousel.rs`) paints a rail in **three pa
 all card backgrounds, then one `draw_images` batch, then all borders — instead of
 per-card: fills and borders each batch into a single flush around the instanced posters.
 
+The three hot flush paths (`flush_batch`, `draw_texture_quad`, `draw_array_instances`)
+cross into JS once each via the workspace `tv-webgl` package (`www/packages/tv-webgl`):
+helpers bind the Rust-owned program/VAO/buffer/texture, upload verts from wasm linear
+memory with WebGL2 `bufferData(…, srcOffset, length)` (no intermediate `Float32Array`
+alloc + copy), then draw. The same package also collapses `begin_frame` / `set_clip`,
+2D texture create+upload, array-layer upload, and text rasterization. Shaders, VAO
+layout, and texture caches stay in `tv-ui-webgl`. Both Vite apps alias `tv-webgl` so
+the bare import emitted into `crates/*/pkg/` resolves (the pkg tree sits outside each
+app’s `node_modules`).
+
 ## Images: async load + caches (`image_cache.rs` + `webgl2.rs`)
 
 `draw_image` / `draw_images` cannot block on a network fetch, so image loading is

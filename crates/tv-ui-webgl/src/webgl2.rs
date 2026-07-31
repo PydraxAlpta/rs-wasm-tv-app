@@ -4,11 +4,13 @@ use std::num::NonZeroUsize;
 
 use lru::LruCache;
 
+use crate::gl_helpers;
 use crate::image_cache::{ImageCache, ImageCacheHandle};
 use js_sys::Float32Array;
 use tv_ui::{Color, ImageBlit, Renderer};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
+use wasm_bindgen::JsValue;
 use web_sys::{
     CanvasRenderingContext2d, HtmlCanvasElement, HtmlImageElement, WebGl2RenderingContext,
     WebGlBuffer, WebGlProgram, WebGlShader, WebGlTexture, WebGlUniformLocation,
@@ -456,24 +458,21 @@ impl WebGl2Renderer {
         if verts.is_empty() {
             return;
         }
-        let gl = &self.gl;
-        gl.use_program(Some(&self.program));
-        gl.bind_vertex_array(Some(&self.vao));
-        gl.bind_buffer(WebGl2RenderingContext::ARRAY_BUFFER, Some(&self.vbo));
-
-        let data = Float32Array::new_with_length(verts.len() as u32);
-        data.copy_from(verts);
-        gl.buffer_data_with_array_buffer_view(
-            WebGl2RenderingContext::ARRAY_BUFFER,
-            &data,
-            WebGl2RenderingContext::DYNAMIC_DRAW,
+        // Pointer must remain valid across the single JS call — no Rust allocs.
+        let byte_offset = verts.as_ptr() as u32;
+        let float_count = verts.len() as u32;
+        let memory = gl_helpers::memory();
+        gl_helpers::flush_color_batch(
+            &self.gl,
+            &self.program,
+            &self.vao,
+            &self.vbo,
+            &memory,
+            byte_offset,
+            float_count,
+            mode,
+            FLOATS_PER_VERT as u32,
         );
-
-        let count = (verts.len() / FLOATS_PER_VERT) as i32;
-        gl.draw_arrays(mode, 0, count);
-
-        gl.bind_vertex_array(None);
-        gl.bind_buffer(WebGl2RenderingContext::ARRAY_BUFFER, None);
     }
 
     fn texture_for(&mut self, url: &str, image: &HtmlImageElement) -> Option<WebGlTexture> {
@@ -484,47 +483,7 @@ impl WebGl2Renderer {
             return None;
         }
 
-        let gl = &self.gl;
-        let texture = gl.create_texture()?;
-        gl.bind_texture(WebGl2RenderingContext::TEXTURE_2D, Some(&texture));
-        gl.pixel_storei(WebGl2RenderingContext::UNPACK_FLIP_Y_WEBGL, 1);
-        gl.tex_parameteri(
-            WebGl2RenderingContext::TEXTURE_2D,
-            WebGl2RenderingContext::TEXTURE_WRAP_S,
-            WebGl2RenderingContext::CLAMP_TO_EDGE as i32,
-        );
-        gl.tex_parameteri(
-            WebGl2RenderingContext::TEXTURE_2D,
-            WebGl2RenderingContext::TEXTURE_WRAP_T,
-            WebGl2RenderingContext::CLAMP_TO_EDGE as i32,
-        );
-        gl.tex_parameteri(
-            WebGl2RenderingContext::TEXTURE_2D,
-            WebGl2RenderingContext::TEXTURE_MIN_FILTER,
-            WebGl2RenderingContext::LINEAR as i32,
-        );
-        gl.tex_parameteri(
-            WebGl2RenderingContext::TEXTURE_2D,
-            WebGl2RenderingContext::TEXTURE_MAG_FILTER,
-            WebGl2RenderingContext::LINEAR as i32,
-        );
-
-        // web-sys overload for HTMLImageElement
-        if gl
-            .tex_image_2d_with_u32_and_u32_and_html_image_element(
-                WebGl2RenderingContext::TEXTURE_2D,
-                0,
-                WebGl2RenderingContext::RGBA as i32,
-                WebGl2RenderingContext::RGBA,
-                WebGl2RenderingContext::UNSIGNED_BYTE,
-                image,
-            )
-            .is_err()
-        {
-            return None;
-        }
-
-        gl.bind_texture(WebGl2RenderingContext::TEXTURE_2D, None);
+        let texture = gl_helpers::create_texture_2d_from_image(&self.gl, image)?;
         self.uploads_remaining -= 1;
         if let Some(evicted) = self.textures.put(url.to_string(), texture.clone()) {
             self.gl.delete_texture(Some(&evicted));
@@ -567,33 +526,20 @@ impl WebGl2Renderer {
             x1, y1, 1.0, 0.0,
         ];
 
-        let gl = &self.gl;
-
-        gl.enable(WebGl2RenderingContext::BLEND);
-        gl.blend_func(
-            WebGl2RenderingContext::SRC_ALPHA,
-            WebGl2RenderingContext::ONE_MINUS_SRC_ALPHA,
+        let byte_offset = verts.as_ptr() as u32;
+        let float_count = verts.len() as u32;
+        let memory = gl_helpers::memory();
+        gl_helpers::draw_textured_quad(
+            &self.gl,
+            &self.tex_program,
+            &self.tex_vao,
+            &self.tex_vbo,
+            texture,
+            &self.tex_uniform,
+            &memory,
+            byte_offset,
+            float_count,
         );
-
-        gl.use_program(Some(&self.tex_program));
-        gl.active_texture(WebGl2RenderingContext::TEXTURE0);
-        gl.bind_texture(WebGl2RenderingContext::TEXTURE_2D, Some(texture));
-        gl.uniform1i(Some(&self.tex_uniform), 0);
-
-        gl.bind_vertex_array(Some(&self.tex_vao));
-        gl.bind_buffer(WebGl2RenderingContext::ARRAY_BUFFER, Some(&self.tex_vbo));
-        let data = Float32Array::new_with_length(verts.len() as u32);
-        data.copy_from(&verts);
-        gl.buffer_data_with_array_buffer_view(
-            WebGl2RenderingContext::ARRAY_BUFFER,
-            &data,
-            WebGl2RenderingContext::DYNAMIC_DRAW,
-        );
-        gl.draw_arrays(WebGl2RenderingContext::TRIANGLES, 0, 6);
-
-        gl.bind_vertex_array(None);
-        gl.bind_texture(WebGl2RenderingContext::TEXTURE_2D, None);
-        gl.disable(WebGl2RenderingContext::BLEND);
     }
 
     fn ensure_layer_scratch(&mut self) -> bool {
@@ -662,47 +608,19 @@ impl WebGl2Renderer {
             Some(canvas.clone())
         };
 
-        let gl = &self.gl;
-        gl.bind_texture(
-            WebGl2RenderingContext::TEXTURE_2D_ARRAY,
-            Some(&self.array_texture),
-        );
-        gl.pixel_storei(WebGl2RenderingContext::UNPACK_FLIP_Y_WEBGL, 1);
-
-        let ok = if let Some(canvas) = scratch.as_ref() {
-            gl.tex_sub_image_3d_with_html_canvas_element(
-                WebGl2RenderingContext::TEXTURE_2D_ARRAY,
-                0,
-                0,
-                0,
-                layer as i32,
-                layer_w,
-                layer_h,
-                1,
-                WebGl2RenderingContext::RGBA,
-                WebGl2RenderingContext::UNSIGNED_BYTE,
-                canvas,
-            )
-            .is_ok()
+        let source: &JsValue = if let Some(canvas) = scratch.as_ref() {
+            canvas.as_ref()
         } else {
-            gl.tex_sub_image_3d_with_html_image_element(
-                WebGl2RenderingContext::TEXTURE_2D_ARRAY,
-                0,
-                0,
-                0,
-                layer as i32,
-                layer_w,
-                layer_h,
-                1,
-                WebGl2RenderingContext::RGBA,
-                WebGl2RenderingContext::UNSIGNED_BYTE,
-                image,
-            )
-            .is_ok()
+            image.as_ref()
         };
-
-        gl.bind_texture(WebGl2RenderingContext::TEXTURE_2D_ARRAY, None);
-        ok
+        gl_helpers::upload_array_layer(
+            &self.gl,
+            &self.array_texture,
+            layer,
+            layer_w,
+            layer_h,
+            source,
+        )
     }
 
     /// Resolve `url` to a resident array layer; upload when `allow_upload`.
@@ -731,38 +649,21 @@ impl WebGl2Renderer {
         if count <= 0 {
             return;
         }
-        let gl = &self.gl;
-        gl.enable(WebGl2RenderingContext::BLEND);
-        gl.blend_func(
-            WebGl2RenderingContext::SRC_ALPHA,
-            WebGl2RenderingContext::ONE_MINUS_SRC_ALPHA,
+        let byte_offset = instances.as_ptr() as u32;
+        let float_count = instances.len() as u32;
+        let memory = gl_helpers::memory();
+        gl_helpers::draw_array_instances(
+            &self.gl,
+            &self.array_program,
+            &self.array_vao,
+            &self.array_instance_vbo,
+            &self.array_texture,
+            &self.array_uniform,
+            &memory,
+            byte_offset,
+            float_count,
+            count,
         );
-
-        gl.use_program(Some(&self.array_program));
-        gl.active_texture(WebGl2RenderingContext::TEXTURE0);
-        gl.bind_texture(
-            WebGl2RenderingContext::TEXTURE_2D_ARRAY,
-            Some(&self.array_texture),
-        );
-        gl.uniform1i(Some(&self.array_uniform), 0);
-
-        gl.bind_vertex_array(Some(&self.array_vao));
-        gl.bind_buffer(
-            WebGl2RenderingContext::ARRAY_BUFFER,
-            Some(&self.array_instance_vbo),
-        );
-        let data = Float32Array::new_with_length(instances.len() as u32);
-        data.copy_from(instances);
-        gl.buffer_data_with_array_buffer_view(
-            WebGl2RenderingContext::ARRAY_BUFFER,
-            &data,
-            WebGl2RenderingContext::DYNAMIC_DRAW,
-        );
-        gl.draw_arrays_instanced(WebGl2RenderingContext::TRIANGLES, 0, 6, count);
-
-        gl.bind_vertex_array(None);
-        gl.bind_texture(WebGl2RenderingContext::TEXTURE_2D_ARRAY, None);
-        gl.disable(WebGl2RenderingContext::BLEND);
     }
 
     fn draw_images_batch(&mut self, images: &[ImageBlit<'_>], allow_upload: bool) {
@@ -798,35 +699,9 @@ impl WebGl2Renderer {
 
     /// Rasterize `text` with a system sans-serif font onto an offscreen canvas.
     fn rasterize_text(size: i32, color: Color, text: &str) -> Option<(HtmlCanvasElement, i32, i32)> {
-        let document = web_sys::window()?.document()?;
-        let canvas = document
-            .create_element("canvas")
-            .ok()?
-            .dyn_into::<HtmlCanvasElement>()
-            .ok()?;
-        let ctx = canvas
-            .get_context("2d")
-            .ok()??
-            .dyn_into::<CanvasRenderingContext2d>()
-            .ok()?;
-
-        let font = format!("{}px sans-serif", size);
-        ctx.set_font(&font);
-        ctx.set_text_baseline("top");
-        let metrics = ctx.measure_text(text).ok()?;
-        let width = metrics.width().ceil().max(1.0) as u32;
-        // Pad height slightly for descenders / glyph overflow.
-        let height = ((size as f64) * 1.25).ceil().max(1.0) as u32;
-        canvas.set_width(width);
-        canvas.set_height(height);
-
-        // Canvas resize clears state — reapply font/styles.
-        ctx.set_font(&font);
-        ctx.set_text_baseline("top");
-        ctx.set_fill_style_str(&color.to_css_rgba());
-        ctx.fill_text(text, 0.0, 0.0).ok()?;
-
-        Some((canvas, width as i32, height as i32))
+        let result =
+            gl_helpers::rasterize_text(size, color.r, color.g, color.b, color.a, text)?;
+        Some((result.canvas(), result.width(), result.height()))
     }
 
     fn text_texture_for(
@@ -841,45 +716,7 @@ impl WebGl2Renderer {
         }
 
         let (canvas, w, h) = Self::rasterize_text(size, color, text)?;
-        let gl = &self.gl;
-        let texture = gl.create_texture()?;
-        gl.bind_texture(WebGl2RenderingContext::TEXTURE_2D, Some(&texture));
-        gl.pixel_storei(WebGl2RenderingContext::UNPACK_FLIP_Y_WEBGL, 1);
-        gl.tex_parameteri(
-            WebGl2RenderingContext::TEXTURE_2D,
-            WebGl2RenderingContext::TEXTURE_WRAP_S,
-            WebGl2RenderingContext::CLAMP_TO_EDGE as i32,
-        );
-        gl.tex_parameteri(
-            WebGl2RenderingContext::TEXTURE_2D,
-            WebGl2RenderingContext::TEXTURE_WRAP_T,
-            WebGl2RenderingContext::CLAMP_TO_EDGE as i32,
-        );
-        gl.tex_parameteri(
-            WebGl2RenderingContext::TEXTURE_2D,
-            WebGl2RenderingContext::TEXTURE_MIN_FILTER,
-            WebGl2RenderingContext::LINEAR as i32,
-        );
-        gl.tex_parameteri(
-            WebGl2RenderingContext::TEXTURE_2D,
-            WebGl2RenderingContext::TEXTURE_MAG_FILTER,
-            WebGl2RenderingContext::LINEAR as i32,
-        );
-
-        if gl
-            .tex_image_2d_with_u32_and_u32_and_html_canvas_element(
-                WebGl2RenderingContext::TEXTURE_2D,
-                0,
-                WebGl2RenderingContext::RGBA as i32,
-                WebGl2RenderingContext::RGBA,
-                WebGl2RenderingContext::UNSIGNED_BYTE,
-                &canvas,
-            )
-            .is_err()
-        {
-            return None;
-        }
-        gl.bind_texture(WebGl2RenderingContext::TEXTURE_2D, None);
+        let texture = gl_helpers::create_texture_2d_from_canvas(&self.gl, &canvas)?;
 
         if let Some((evicted, _, _)) = self.text_textures.put(key, (texture.clone(), w, h)) {
             self.gl.delete_texture(Some(&evicted));
@@ -893,19 +730,18 @@ impl Renderer for WebGl2Renderer {
         self.line_verts.clear();
         self.tri_verts.clear();
         self.uploads_remaining = self.image_uploads_per_frame;
-        self.gl.disable(WebGl2RenderingContext::SCISSOR_TEST);
-        self.gl.clear_color(
+        gl_helpers::begin_frame(
+            &self.gl,
             f32::from(clear.r) / 255.0,
             f32::from(clear.g) / 255.0,
             f32::from(clear.b) / 255.0,
             f32::from(clear.a) / 255.0,
         );
-        self.gl.clear(WebGl2RenderingContext::COLOR_BUFFER_BIT);
     }
 
     fn end_frame(&mut self) {
         self.flush_color_batches();
-        self.gl.disable(WebGl2RenderingContext::SCISSOR_TEST);
+        gl_helpers::set_clip(&self.gl, false, 0, 0, 0, 0);
     }
 
     fn stroke_line(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, color: Color) {
@@ -1024,11 +860,10 @@ impl Renderer for WebGl2Renderer {
                 let h = rect.h.round().max(0.0) as i32;
                 // WebGL scissor origin is bottom-left.
                 let gl_y = self.height as i32 - y - h;
-                self.gl.enable(WebGl2RenderingContext::SCISSOR_TEST);
-                self.gl.scissor(x, gl_y, w, h);
+                gl_helpers::set_clip(&self.gl, true, x, gl_y, w, h);
             }
             _ => {
-                self.gl.disable(WebGl2RenderingContext::SCISSOR_TEST);
+                gl_helpers::set_clip(&self.gl, false, 0, 0, 0, 0);
             }
         }
     }

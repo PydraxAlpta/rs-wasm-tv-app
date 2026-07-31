@@ -4,6 +4,7 @@ import wasm from "vite-plugin-wasm";
 
 const pkgDir = path.resolve(__dirname, "../../../crates/tv-app/pkg");
 const repoRoot = path.resolve(__dirname, "../../..");
+const tvWebgl = path.resolve(__dirname, "../../packages/tv-webgl/src/index.ts");
 
 function watchPkg(): Plugin {
   return {
@@ -20,6 +21,7 @@ export default defineConfig({
   resolve: {
     alias: {
       "rs-wasm-tv-app": pkgDir,
+      "tv-webgl": tvWebgl,
     },
   },
   server: {

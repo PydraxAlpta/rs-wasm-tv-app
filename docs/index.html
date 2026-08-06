@@ -2,14 +2,109 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="./vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>WASM TV</title>
-    <script type="module" crossorigin src="./assets/index-ClaZdLCS.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-CliIiNFt.css">
+    <title>Catalog</title>
+    <style>
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: #0c0e14;
+      }
+
+      #canvas {
+        display: block;
+        width: 100%;
+        height: 100%;
+      }
+
+      #stats {
+        position: absolute;
+        top: 12px;
+        right: 12px;
+        left: auto;
+        margin: 0;
+        padding: 8px 10px;
+        font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        color: #e8eef7;
+        background: rgba(8, 10, 16, 0.72);
+        white-space: pre;
+        pointer-events: none;
+        user-select: none;
+        z-index: 1;
+        text-align: right;
+      }
+
+      #detail {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(4, 6, 12, 0.72);
+        z-index: 2;
+      }
+
+      #detail[hidden] {
+        display: none;
+      }
+
+      #detail-panel {
+        width: min(640px, 80vw);
+        padding: 28px 32px 24px;
+        border-radius: 12px;
+        background: #141822;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        color: #e8eef7;
+        font-family: system-ui, sans-serif;
+      }
+
+      #detail-kicker {
+        margin: 0 0 8px;
+        font-size: 14px;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: #9aa6b8;
+      }
+
+      #detail-title {
+        margin: 0 0 16px;
+        font-size: 36px;
+        font-weight: 650;
+        line-height: 1.15;
+      }
+
+      #detail-hint {
+        margin: 0;
+        font-size: 14px;
+        color: #9aa6b8;
+      }
+
+      #canvas:focus {
+        outline: none;
+      }
+    </style>
+    <script type="module" crossorigin src="./assets/index-CZpAKb6o.js"></script>
   </head>
   <body>
-    <div id="app">
+    <canvas id="canvas" tabindex="0" aria-label="Catalog"></canvas>
+    <pre id="stats">FPS: —
+Frame: —
+Work: —</pre>
+    <div id="detail" hidden>
+      <div id="detail-panel">
+        <p id="detail-kicker">Selected</p>
+        <h1 id="detail-title"></h1>
+        <p id="detail-hint">OK / Enter — close · Back — close</p>
+      </div>
     </div>
   </body>
 </html>
